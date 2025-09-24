@@ -1,0 +1,14 @@
+[
+  {
+    "name": "search_web",
+    "description": "Search the web for information.",
+    "parameters": {"query": "string"},
+    "keywords": ["search", "web", "lookup"]
+  },
+  {
+    "name": "add_numbers",
+    "description": "Add a list of numbers.",
+    "parameters": {"numbers": "list"},
+    "keywords": ["sum", "add", "numbers"]
+  }
+]

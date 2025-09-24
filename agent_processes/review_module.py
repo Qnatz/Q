@@ -1,0 +1,90 @@
+import os
+from datetime import datetime
+from typing import List
+from memory.prompt_manager import PromptManager # Import PromptManager
+
+class ReviewModule:
+    """
+    Code review agent:
+      - Uses LLM (if available) to produce human-readable feedback
+      - Falls back to simple heuristics when LLM is not provided
+      - Writes project_state/code_review_report.md
+    """
+
+    def __init__(self, llm=None, prompt_manager: PromptManager = None, tool_registry=None): # Accept prompt_manager and tool_registry
+        self.llm = llm
+        self.prompt_manager = prompt_manager # Store prompt_manager
+        self.tool_registry = tool_registry # Store tool_registry
+        self.system_prompt_name = "orchestrator_review_phase_prompt.md" # Name of the prompt in memory
+
+    def _ensure_dir(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
+
+    def _read_file(self, path: str) -> str:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception:
+            return ""
+
+    def _llm_review(self, filepath: str, content: str) -> str:
+        system_prompt_content = self.prompt_manager.get_prompt(self.system_prompt_name)
+        if not system_prompt_content:
+            raise ValueError(f"System prompt '{self.system_prompt_name}' not found in memory.")
+
+        prompt = f"""
+File: {filepath}
+
+Provide a concise review with:
+- Summary (what the file does)
+- Correctness & potential bugs
+- Readability & maintainability
+- Security & performance concerns
+- Actionable recommendations (bullet points)
+Limit to ~200-300 words.
+Code begins below:
+
+{content}
+
+"""
+        try:
+            # If your UnifiedLLM exposes .generate(messages) use that API; otherwise adapt as needed.
+            return self.llm.generate([{"role": "system", "content": system_prompt_content}, {"role": "user", "content": prompt}]) if self.llm else ""
+        except Exception:
+            return ""
+
+    def _heuristic_review(self, filepath: str, content: str) -> str:
+        # Minimal fallback when no LLM is available
+        lines = []
+        lines.append(f"**Heuristic Review for {filepath}**")
+        if not content.strip():
+            lines.append("- File is empty or unreadable.")
+            return "\n".join(lines)
+
+        # Very basic flags
+        if "TODO" in content or "todo" in content.lower():
+            lines.append("- Contains TODOs; consider resolving before release.")
+        if len(content) > 8000:
+            lines.append("- File is large; consider splitting into modules for maintainability.")
+        if filepath.endswith((".js", ".ts")) and "console.log" in content:
+            lines.append("- Remove debugging `console.log` statements in production.")
+
+        if not lines:
+            lines.append("- No obvious issues detected by heuristics.")
+        return "\n".join(lines)
+
+    def review(self, implemented_files: List[str]) -> str:
+        """
+        Generates a code review report for the implemented files using StepwiseReviewTool.
+
+        Returns:
+          Path to the generated review report.
+        """
+        if self.tool_registry:
+            review_tool_instance = self.tool_registry.get_tool("stepwise_review")
+            if review_tool_instance:
+                return review_tool_instance.run(implemented_files=implemented_files)
+            else:
+                raise ValueError("StepwiseReviewTool not found in tool registry.")
+        else:
+            raise ValueError("Tool registry not provided to ReviewModule.")

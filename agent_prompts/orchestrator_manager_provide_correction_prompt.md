@@ -1,0 +1,1 @@
+The developer output failed validation. Provide a corrective spec that the programmer can follow. Return JSON object 'spec' with keys to fix the implementation and a short 'notes' message.

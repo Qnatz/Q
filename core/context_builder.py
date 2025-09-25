@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import time
+import httpx
 
 from core.config import MAX_RECENT_TURNS, MAX_SUMMARY_TOKENS
 from utils.ui_helpers import say_error
@@ -104,6 +105,22 @@ class ContextBuilder:
             summary=summary,
             timestamp=time.time()
         )
+
+    def get_ide_context(self) -> Dict[str, Any]:
+        """Fetch IDE context from the local sidecar server."""
+        try:
+            response = httpx.get("http://127.0.0.1:8001/context", timeout=0.5)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            return response.json()
+        except httpx.RequestError as e:
+            # logger.warning(f"Could not connect to IDE server: {e}")
+            return {"error": f"Could not connect to IDE server: {e}"}
+        except json.JSONDecodeError:
+            # logger.warning("IDE server returned invalid JSON.")
+            return {"error": "IDE server returned invalid JSON."}
+        except Exception as e:
+            # logger.error(f"An unexpected error occurred while fetching IDE context: {e}")
+            return {"error": f"An unexpected error occurred: {e}"}
 
     def build_conversation_context(self, state: dict) -> str:
         """Build optimized conversation context"""

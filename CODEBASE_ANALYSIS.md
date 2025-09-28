@@ -69,11 +69,11 @@ When the agent is launched from within a project directory and the user's reques
 
 *   **The Tool System (`tools/tool_registry.py`):** This system provides the agent's modules with the capabilities to perform concrete actions, such as planning, coding, and analysis.
 
-*   **LLM & Memory (`qllm/`, `rag/`, `memory/`):** These foundational layers provide the agent with intelligence and context.
+*   **LLM & Memory (`qllm/`, `memory/`):** These foundational layers provide the agent with intelligence and context. The `UnifiedMemory` system (`memory/unified_memory.py`) implements the Retrieval-Augmented Generation (RAG) functionality, using `ChromaDB` for vector-based semantic search and an ONNX model for generating embeddings.
 
 ---
 
 ## 5. Data and State Management
 
-*   **Schemas (`schemas/`):** Enforces the structure of the JSON data passed between the agent's internal modules, including the new `code_correction_state` within the `orchestration_schema`.
+*   **Schemas (`schemas/`):** Located at the root of the project, this directory enforces the structure of the JSON data passed between the agent's internal modules, including the new `code_correction_state` within the `orchestration_schema`.
 *   **Persistent State (`data/storage/`):</strong All persistent data, including the agent's memory and any software it generates, is stored in the `data/storage` and `projects` directories.

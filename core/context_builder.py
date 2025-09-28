@@ -1,4 +1,5 @@
 # context_builder.py
+import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import hashlib
@@ -9,6 +10,8 @@ import httpx
 from core.config import MAX_RECENT_TURNS, MAX_SUMMARY_TOKENS
 from utils.ui_helpers import say_error
 from core.state_manager import ConversationState
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SummaryCache:
@@ -72,7 +75,7 @@ class ContextBuilder:
             return summary_text.strip()
             
         except Exception as e:
-            say_error(f"History summarization failed: {e}")
+            logger.error(f"History summarization failed: {e}")
             return self._create_fallback_summary(old_messages)
 
     def _extract_summary_text(self, response) -> str:
@@ -113,13 +116,13 @@ class ContextBuilder:
             response.raise_for_status()  # Raise an exception for HTTP errors
             return response.json()
         except httpx.RequestError as e:
-            # logger.warning(f"Could not connect to IDE server: {e}")
+            logger.warning(f"Could not connect to IDE server: {e}")
             return {"error": f"Could not connect to IDE server: {e}"}
         except json.JSONDecodeError:
-            # logger.warning("IDE server returned invalid JSON.")
+            logger.warning("IDE server returned invalid JSON.")
             return {"error": "IDE server returned invalid JSON."}
         except Exception as e:
-            # logger.error(f"An unexpected error occurred while fetching IDE context: {e}")
+            logger.error(f"An unexpected error occurred while fetching IDE context: {e}")
             return {"error": f"An unexpected error occurred: {e}"}
 
     def build_conversation_context(self, state: dict) -> str:

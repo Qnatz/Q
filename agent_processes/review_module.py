@@ -1,7 +1,11 @@
 import os
 from datetime import datetime
 from typing import List
+import logging
 from memory.prompt_manager import PromptManager # Import PromptManager
+from tools.base_tool_classes import ToolExecutionStatus
+
+logger = logging.getLogger(__name__)
 
 class ReviewModule:
     """
@@ -15,7 +19,7 @@ class ReviewModule:
         self.llm = llm
         self.prompt_manager = prompt_manager # Store prompt_manager
         self.tool_registry = tool_registry # Store tool_registry
-        self.system_prompt_name = "orchestrator_review_phase_prompt.md" # Name of the prompt in memory
+        self.system_prompt_name = "orchestrator/review" # Name of the prompt in memory
 
     def _ensure_dir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
@@ -30,6 +34,7 @@ class ReviewModule:
     def _llm_review(self, filepath: str, content: str) -> str:
         system_prompt_content = self.prompt_manager.get_prompt(self.system_prompt_name)
         if not system_prompt_content:
+            logger.error(f"System prompt '{self.system_prompt_name}' not found in memory.")
             raise ValueError(f"System prompt '{self.system_prompt_name}' not found in memory.")
 
         prompt = f"""
@@ -81,10 +86,15 @@ Code begins below:
           Path to the generated review report.
         """
         if self.tool_registry:
-            review_tool_instance = self.tool_registry.get_tool("stepwise_review")
-            if review_tool_instance:
-                return review_tool_instance.run(implemented_files=implemented_files)
+            result = self.tool_registry.execute_tool(
+                "stepwise_review",
+                {"implemented_files": implemented_files}
+            )
+            if result.status == ToolExecutionStatus.SUCCESS:
+                return result.result
             else:
-                raise ValueError("StepwiseReviewTool not found in tool registry.")
+                logger.error(f"StepwiseReviewTool execution failed: {result.error_message}")
+                raise ValueError(f"StepwiseReviewTool execution failed: {result.error_message}")
         else:
+            logger.error("Tool registry not provided to ReviewModule.")
             raise ValueError("Tool registry not provided to ReviewModule.")

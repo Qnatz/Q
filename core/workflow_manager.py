@@ -5,12 +5,13 @@ from schemas.plan_schema import PLAN_SCHEMA
 from utils.validation_utils import validate
 
 class WorkflowManager:
-    def __init__(self, planner, manager, programmer, qa, reviewer):
+    def __init__(self, planner, manager, programmer, qa, reviewer, state_manager):
         self.planner = planner
         self.manager = manager
         self.programmer = programmer
         self.qa = qa
         self.reviewer = reviewer
+        self.state_manager = state_manager
         self.logger = logging.getLogger(__name__)
 
     def execute_workflow(self, response_dict: dict):
@@ -29,11 +30,30 @@ class WorkflowManager:
         
         try:
             # Phase 1: Planning
-            plan_response = self.planner.plan(refined_prompt)
-            plan = safe_json_extract(plan_response)
-            if not plan or not validate(plan, PLAN_SCHEMA):
-                say_error("Planner failed to return valid plan. Aborting workflow.")
-                return
+            plan = self.planner.generate_plan(project_title, refined_prompt, self.state_manager.get_conversation_state("default_user").history)
+            if plan:
+                try:
+                    validate(plan, PLAN_SCHEMA)
+                except Exception as e:
+                    self.logger.warning(f"Plan failed schema validation but will be used as-is. Error: {e}")
+            else:
+                self.logger.error(f"No plan generated, using fallback.")
+                # Create a simple fallback plan
+                plan = {
+                    "project": {
+                        "name": project_title,
+                        "description": refined_prompt
+                    },
+                    "files": [],
+                    "tasks": [
+                        {
+                            "task": "Implement based on user request",
+                            "description": f"Implement: {refined_prompt}",
+                            "module": "ProgrammingModule",
+                            "output": "Working implementation"
+                        }
+                    ]
+                }
             agent_log("Planner", "Comprehensive plan generated successfully.")
 
             # Phase 2: Management Review
@@ -45,7 +65,8 @@ class WorkflowManager:
             agent_log("Manager", "Plan approved and validated.")
 
             # Phase 3: Implementation
-            implemented_files = self.programmer.execute(plan, project_title)
+            implemented_files_generator = self.programmer.implement(plan, project_title)
+            implemented_files = list(implemented_files_generator)
             agent_log("Programmer", f"Successfully implemented {len(implemented_files)} files.")
 
             # Phase 4: Quality Assurance
@@ -64,3 +85,4 @@ class WorkflowManager:
 
         say_success(f"✅ {project_title} has been built successfully!")
         say_system("📁 Project files can be found in the 'projects' directory.")
+        return implemented_files

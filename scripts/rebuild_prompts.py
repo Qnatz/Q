@@ -26,19 +26,20 @@ def ingest_prompts(unified_memory_instance):
         return
 
     print(f"Starting ingestion from '{PROMPT_DIR}'...")
-    for filename in os.listdir(PROMPT_DIR):
-        if filename.endswith(".md"):
-            prompt_name = filename.replace('.md', '')
-            filepath = os.path.join(PROMPT_DIR, filename)
-            
-            with open(filepath, 'r', encoding='utf-8') as f:
-                prompt_text = f.read()
-            
-            print(f"Ingesting prompt: {prompt_name}")
-            start_time = time.time()
-            loader.add_prompt(prompt_name, prompt_text)
-            end_time = time.time()
-            print(f"Ingested {prompt_name} in {end_time - start_time:.2f} seconds")
+    for root, _, files in os.walk(PROMPT_DIR):
+        for filename in files:
+            if filename.endswith(".md"):
+                prompt_name = os.path.join(root, filename).replace(f"{PROMPT_DIR}/", "").replace(".md", "")
+                filepath = os.path.join(root, filename)
+                
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    prompt_text = f.read()
+                
+                print(f"Ingesting prompt: {prompt_name}")
+                start_time = time.time()
+                loader.add_prompt(prompt_name, prompt_text)
+                end_time = time.time()
+                print(f"Ingested {prompt_name} in {end_time - start_time:.2f} seconds")
 
     print("\nIngestion complete. Verifying prompts in DB:")
     all_prompts = loader.get_all_prompts()

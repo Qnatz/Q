@@ -1,20 +1,20 @@
 """UnifiedLLM: unified entrypoint for CrewAI-like agents."""
 
 import json
-import logging
+# import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from .config import Config
 from .backends import (
-    OpenAIHTTPBackend,
     GeminiBackend,
+    OpenAIHTTPBackend,
     SubprocessBackend,
 )
+from .config import Config
 from .utils import json_dumps_safe
 
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.DEBUG)
+# logger = logging.getLogger(__name__)
+# logger.addHandler(logging.StreamHandler())
+# logger.setLevel(logging.WARNING) # Changed to WARNING
 
 
 class UnifiedLLM:
@@ -41,7 +41,7 @@ class UnifiedLLM:
     def _run_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         fn = self.tool_impls.get(name)
         if fn is None:
-            logger.warning("Tool requested but not implemented: %s", name)
+            # logger.warning("Tool requested but not implemented: %s", name)
             return {"error": f"Tool '{name}' not implemented."}
         try:
             if isinstance(arguments, dict):
@@ -49,7 +49,7 @@ class UnifiedLLM:
             else:
                 return fn(arguments)
         except Exception as e:
-            logger.exception("Tool %s raised an exception", name)
+            # logger.exception("Tool %s raised an exception", name)
             return {"error": f"Tool '{name}' raised exception: {e}"}
 
     def _append_function_result_to_messages(
@@ -91,10 +91,10 @@ class UnifiedLLM:
             while True:
                 loop_count += 1
                 if loop_count > max(1, self.cfg.max_tool_loops):
-                    logger.warning(
-                        "Reached max_tool_loops (%s). Stopping.",
-                        self.cfg.max_tool_loops,
-                    )
+                    # logger.warning(
+                    #     "Reached max_tool_loops (%s). Stopping.",
+                    #     self.cfg.max_tool_loops,
+                    # )
                     break
 
                 if backend_kind == "gemini":
@@ -118,20 +118,20 @@ class UnifiedLLM:
                     raise ValueError("Unsupported backend: " + backend_kind)
 
                 if not function_calls:
-                    logger.debug(
-                        f"UnifiedLLM.generate: No function calls. Returning assistant_text: {assistant_text}"
-                    )
+                    # logger.debug(
+                    #     f"UnifiedLLM.generate: No function calls. Returning assistant_text: {assistant_text}"
+                    # )
                     return assistant_text or ""
 
                 fc = function_calls[0]
                 name = fc.get("name")
                 args = fc.get("arguments", {}) or {}
 
-                logger.info(
-                    "Executing tool: %s with args: %s",
-                    name,
-                    json_dumps_safe(args),
-                )
+                # logger.info(
+                #     "Executing tool: %s with args: %s",
+                #     name,
+                #     json_dumps_safe(args),
+                # )
                 result = self._run_tool(name, args)
 
                 self._append_function_result_to_messages(
@@ -151,11 +151,14 @@ class UnifiedLLM:
                 elif backend_kind in ("cli", "subprocess"):
                     return self.backend_impl.chat(messages, max_tokens=self.cfg.max_tokens)
             except Exception:
-                logger.exception("Final backend call failed")
+                # logger.exception("Final backend call failed")
+                pass
             return ""
         except Exception as e:
-            logger.error(f"Error during LLM generation: {e}")
-            return {"error": str(e)}
+            # logger.error(f"Error during LLM generation: {e}")
+            return json.dumps({
+                "error": f"Error during LLM generation: {e}"
+            })
 
     def generate_with_plan(
         self,

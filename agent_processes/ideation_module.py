@@ -24,19 +24,22 @@ class IdeationResult:
     refined_prompt: Optional[str] = None
     confirmation_message: Optional[str] = None
 
+import random
+
 class IdeationModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager, logger: logging.Logger):
+    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
         self.llm = llm
         self.prompt_manager = prompt_manager
-        self.logger = logger
+        self.logger = logging.getLogger(__name__)
         self._max_retries = 3
 
     def _get_ideation_prompt(self) -> str:
-        """Get ideation prompt with fallback"""
+        """Get ideation prompt with dynamic opening line"""
         prompt = self.prompt_manager.get_prompt("ideation_prompt.md")
         if not prompt:
             self.logger.warning("Ideation prompt not found, using fallback")
             return self._get_fallback_ideation_prompt()
+
         return prompt
 
     def _get_fallback_ideation_prompt(self) -> str:
@@ -61,12 +64,10 @@ class IdeationModule:
     def _validate_ideation_response(self, response: str) -> Tuple[bool, Optional[Dict]]:
         """Validate and parse LLM response"""
         try:
-            # Try to extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group())
-                if all(key in parsed for key in ["status", "project_title", "refined_prompt"]):
-                    return True, parsed
+            # The response should be a JSON object, and nothing else.
+            parsed = json.loads(response)
+            if isinstance(parsed, dict) and all(key in parsed for key in ["status", "project_title", "refined_prompt"]):
+                return True, parsed
             return False, None
         except (json.JSONDecodeError, KeyError) as e:
             self.logger.debug(f"JSON validation failed: {e}")
@@ -76,34 +77,18 @@ class IdeationModule:
         """Start a new ideation session with improved error handling"""
         self.logger.info(f"Starting ideation session for query: {user_query}")
         
-        for attempt in range(self._max_retries):
-            try:
-                system_prompt = self._get_ideation_prompt()
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_query}
-                ]
-                
-                response_text = self.llm.generate(messages, use_tools=False)
-                
-                # Validate response
-                is_valid, parsed_response = self._validate_ideation_response(response_text)
-                if is_valid and parsed_response.get("status") == "complete":
-                    return {
-                        "type": "ideation_complete",
-                        "project_title": parsed_response["project_title"],
-                        "refined_prompt": parsed_response["refined_prompt"],
-                        "confirmation_message": parsed_response.get("confirmation_message", "Idea refined successfully!")
-                    }
-                
-                return {"type": "ideation_turn", "message": response_text.strip()}
-                
-            except Exception as e:
-                self.logger.error(f"Attempt {attempt + 1} failed: {e}")
-                if attempt == self._max_retries - 1:
-                    return self._get_error_response("start")
+        # Use the LLM to generate an initial response based on the ideation prompt and user query
+        system_prompt = self._get_ideation_prompt()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_query}
+        ]
+        initial_response = self.llm.generate(messages, use_tools=False)
 
-        return self._get_error_response("start")
+        # Store the initial user query in history
+        # This will be used in continue_ideation_session
+        # For now, we just return the initial greeting
+        return {"type": "ideation_turn", "message": initial_response}
 
     def continue_ideation_session(self, history: List[Dict]) -> Dict[str, str]:
         """Continue ideation session with conversation history"""
@@ -120,7 +105,7 @@ class IdeationModule:
                 response_text = self.llm.generate(messages, use_tools=False)
                 
                 # Check for completion
-                is_valid, parsed_response = self._validate_ideation_response(response_text)
+                is_valid, parsed_response = self._validate_ideation_response(response_text.strip())
                 if is_valid and parsed_response.get("status") == "complete":
                     self.logger.info("Ideation session completed successfully")
                     return {
@@ -129,8 +114,9 @@ class IdeationModule:
                         "refined_prompt": parsed_response["refined_prompt"],
                         "confirmation_message": parsed_response.get("confirmation_message", "Great! Let's build this!")
                     }
-                
-                return {"type": "ideation_turn", "message": response_text.strip()}
+                else:
+                    # If it's not a valid completion JSON, it's a conversational turn.
+                    return {"type": "ideation_turn", "message": response_text.strip()}
                 
             except Exception as e:
                 self.logger.error(f"Attempt {attempt + 1} failed: {e}")

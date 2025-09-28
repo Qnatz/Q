@@ -3,6 +3,7 @@ import json
 from typing import List, Dict, Any, Optional, Generator
 from dataclasses import dataclass
 import logging
+import os
 
 from qllm.unified_llm import UnifiedLLM
 from schemas.implementation_schema import IMPLEMENTATION_SCHEMA
@@ -25,9 +26,8 @@ class ProgrammingModule:
         self.llm = llm
         self.prompt_manager = prompt_manager
         self.tool_registry = tool_registry
-        self.logger = logging.getLogger(__name__)
 
-    def implement(self, plan: Dict[str, Any]) -> Generator[Dict[str, Any], None, None]:
+    def implement(self, plan: Dict[str, Any], project_title: str) -> Generator[Dict[str, Any], None, None]:
         """
         Implement project tasks using a generator to stream progress.
         """
@@ -36,18 +36,20 @@ class ProgrammingModule:
             yield {"type": "complete", "status": "success", "message": "No tasks to implement."}
             return
 
-        self.logger.info(f"Starting implementation of {len(tasks)} tasks.")
+        logger.info(f"Starting implementation of {len(tasks)} tasks.")
         
         try:
-            # The tool now returns a generator
-            implementation_generator = self.tool_registry.execute_tool(
+            tool_result = self.tool_registry.execute_tool(
                 "stepwise_implementation", 
-                parameters={"tasks": tasks}
+                parameters={"tasks": tasks, "project_title": project_title}
             )
 
-            for result in implementation_generator:
-                yield result  # Stream progress directly to the caller
+            if tool_result.status == ToolExecutionStatus.SUCCESS:
+                for result in tool_result.result:
+                    yield result
+            else:
+                yield {"type": "error", "message": f"Implementation failed: {tool_result.error_message}"}
 
         except Exception as e:
-            self.logger.error(f"Error during stepwise implementation: {e}")
+            logger.error(f"Error during stepwise implementation: {e}")
             yield {"type": "error", "message": f"Implementation failed: {e}"}

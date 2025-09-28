@@ -26,7 +26,6 @@ import logging
 from pathlib import Path
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class MemoryType(Enum):
@@ -708,35 +707,80 @@ class UnifiedMemory:
         except Exception as e:
             logger.error(f"Failed to retrieve prompt '{name}': {e}")
             return None
-    
-    def get_metrics(self) -> Dict[str, Any]:
+
+    def get_conversation_context(self, user_id: str, current_query: str, 
+                               context_turns: int = 5, semantic_results: int = 3) -> Dict[str, Any]:
         """
-        Get system usage metrics"""
+        Get comprehensive conversation context for the orchestrator
+        Combines recent conversation + relevant semantic memories
+        """
         try:
-            metrics = {}
+            # Get recent conversation history
+            recent_history = self.tinydb.get_conversation_history(user_id, context_turns)
             
-            # TinyDB metrics
-            if hasattr(self.tinydb, 'metrics_table'):
-                for metric in self.tinydb.metrics_table.all():
-                    metrics[metric["name"]] = metric["value"]
+            # Get semantically similar content
+            semantic_context = self.chromadb.similarity_search(
+                current_query, 
+                semantic_results,
+                filters={"user_id": user_id}
+            )
             
-            # ChromaDB metrics
-            try:
-                chroma_count = self.chromadb.collection.count()
-                metrics["chromadb_entries"] = chroma_count
-            except:
-                metrics["chromadb_entries"] = 0
+            # Get relevant facts
+            fact_context = self.tinydb.search_facts(current_query)[:2]
             
-            # Embedding engine metrics
-            metrics["embedding_model"] = str(self.embeddings.model_path)
-            metrics["embedding_ready"] = self.embeddings.session is not None
-            
-            return metrics
+            return {
+                "recent_conversation": recent_history,
+                "semantic_context": semantic_context,
+                "relevant_facts": fact_context,
+                "context_summary": self._generate_context_summary(
+                    recent_history, semantic_context, fact_context
+                )
+            }
             
         except Exception as e:
-            logger.error(f"Failed to get metrics: {e}")
-            return {}
+            logger.error(f"Failed to get conversation context: {e}")
+            return {"recent_conversation": [], "semantic_context": [], "relevant_facts": []}
     
+    def store_conversation_turn(self, user_id: str, role: str, content: str,
+                              metadata: Optional[Dict] = None) -> str:
+        """
+        Convenience method for storing conversation turns
+        Automatically handles both structured and semantic storage
+        """
+        enhanced_metadata = {
+            "role": role,
+            "turn_type": "conversation",
+            **(metadata or {})
+        }
+        
+        return self.store(content, MemoryType.CONVERSATION, user_id, enhanced_metadata)
+    
+    def store_agent_output(self, agent_name: str, output: str, user_id: str = "system",
+                          metadata: Optional[Dict] = None) -> str:
+        """
+        Store output from specific agents for later retrieval and learning
+        """
+        enhanced_metadata = {
+            "agent": agent_name,
+            "output_type": "agent_response",
+            **(metadata or {})
+        }
+        
+        return self.store(output, MemoryType.AGENT_OUTPUT, user_id, enhanced_metadata)
+    
+    def store_tool_result(self, tool_name: str, result: str, user_id: str = "system",
+                         metadata: Optional[Dict] = None) -> str:
+        """
+        Store tool execution results for context and learning
+        """
+        enhanced_metadata = {
+            "tool": tool_name,
+            "result_type": "tool_execution",
+            **(metadata or {})
+        }
+        
+        return self.store(result, MemoryType.TOOL_RESULT, user_id, enhanced_metadata)
+
     def _generate_id(self, content: str, memory_type: MemoryType, 
                     user_id: str, timestamp: datetime) -> str:
         """

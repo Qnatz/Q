@@ -1,9 +1,9 @@
 # state_manager.py
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-from tinydb import TinyDB, Query
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
+
 import logging
+from memory.unified_memory import UnifiedMemory
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,27 @@ class ConversationState:
             return default
 
 class StateManager:
-    def __init__(self, db_path: str = 'chat_history.json'):
+    def __init__(self, unified_memory: UnifiedMemory = None):
+        self._unified_memory = unified_memory or UnifiedMemory()
         self.conversation_states: Dict[str, ConversationState] = {}
-        self.db = TinyDB(db_path)
-        self.history_table = self.db.table('history')
+
+    @property
+    def unified_memory(self) -> UnifiedMemory:
+        return self._unified_memory
+
+    def get_state(self, key: str, default: Any = None) -> Any:
+        return self._unified_memory.get_state(key, default)
+
+    def set_state(self, key: str, value: Any):
+        self._unified_memory.set_state(key, value)
+
+    def append_to_state(self, key: str, value: Any):
+        # Assuming state is a list, append to it. If not, create a new list.
+        current_state = self._unified_memory.get_state(key, [])
+        if not isinstance(current_state, list):
+            current_state = [current_state] # Convert to list if not already
+        current_state.append(value)
+        self._unified_memory.set_state(key, current_state)
 
     def get_conversation_state(self, user_id: str) -> ConversationState:
         """

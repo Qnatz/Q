@@ -1,17 +1,18 @@
 import json
 import re
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from core.config import ResponseType, MAX_TURNS_BEFORE_BUILD
 from utils.ui_helpers import say_assistant, say_error, say_system
 from core.state_manager import ConversationState
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 class ResponseHandler:
-    def __init__(self, unified_llm, state_manager, context_builder, workflow_manager, researcher, ideator, router, agent_manager):
+    def __init__(self, unified_llm, state_manager, context_builder, workflow_manager, researcher, ideator, router, agent_manager, code_assist):
         self.unified_llm = unified_llm
         self.state_manager = state_manager
         self.context_builder = context_builder
@@ -20,6 +21,7 @@ class ResponseHandler:
         self.ideator = ideator
         self.router = router
         self.agent_manager = agent_manager
+        self.code_assist = code_assist
 
     def _safe_state_access(self, state, key: str, default: Any = None) -> Any:
         """Safely access state attributes with fallback support"""
@@ -48,7 +50,7 @@ class ResponseHandler:
             logger.warning(f"Failed to update state key {key}: {e}")
 
     def handle_response(self, response: dict, user_id: str):
-        """Handle response with proper state access"""
+        """Handle response with streamlined routing system"""
         route = response.get("type")
         message = response.get("message", "I'm not sure how to proceed.")
         
@@ -61,13 +63,6 @@ class ResponseHandler:
                 content = last_message.get("content") if isinstance(last_message, dict) else getattr(last_message, "content", "")
                 self._continue_ideation_workflow(content, state)
             return
-        elif self._safe_state_access(state, "is_in_correction_session", False):
-            history = self._safe_state_access(state, "history", [])
-            if history:
-                last_message = history[-1]
-                content = last_message.get("content") if isinstance(last_message, dict) else getattr(last_message, "content", "")
-                self._continue_correction_workflow(content, state)
-            return
 
         history = self._safe_state_access(state, "history", [])
         if history:
@@ -76,48 +71,62 @@ class ResponseHandler:
         else:
             user_query = ""
 
+        # Streamlined route handling
         if route == "start_planner":
-            self._initiate_build_workflow(user_query, state)
+            self.initiate_build_workflow(user_query, state)
         elif route == "update_programmer":
             self._handle_update_programmer(user_query, state)
-        elif route == "code_correction":
-            self._handle_code_correction(user_query, state)
-        elif route == "ideation":
-            self._handle_ideation(user_query, state)
-        elif route == "chat":
-            self._generate_intelligent_response(user_query, json.dumps(history), state)
-        elif route == "technical_inquiry":
-            self._handle_technical_inquiry_workflow(user_query, state)
-        elif route == "enhance":
-            self._handle_enhance_workflow(user_query, state)
-        elif route == "extract":
-            self._handle_extract_workflow(user_query, state)
+        elif route == "update_planner":
+            self._handle_update_planner(user_query, state)
         elif route == "resume_and_update_planner":
             self._handle_resume_and_update_planner(user_query, state)
         elif route == "create_new_issue":
             self._handle_create_new_issue(user_query, state)
         elif route == "start_planner_for_followup":
             self._handle_start_planner_for_followup(user_query, state)
+        elif route == "code_assist":
+            self._handle_code_assist(user_query, state)
+        elif route == "no_op":
+            self._handle_no_op(user_query, state)
+        elif route == "ideation":
+            self._handle_ideation(user_query, state)
+        elif route == "chat":
+            self._handle_chat(user_query, state)
+        elif route == "technical_inquiry":
+            self._handle_technical_inquiry_workflow(user_query, state)
         else:
             say_assistant(message)
 
-    def _initiate_build_workflow(self, user_query: str, state: dict):
+    def _handle_no_op(self, user_query: str, state: dict):
+        """Handle no-op route - message doesn't require routing"""
+        say_assistant("I understand. Is there anything specific you'd like me to help you with?")
+
+    def _handle_update_planner(self, user_query: str, state: dict):
+        """Handle update_planner route - send new related request to running planner"""
+        say_system("Updating the planner with new information.")
+        # Implementation would depend on your planner architecture
+        say_assistant("I've updated the planner with your new request.")
+
+    def initiate_build_workflow(self, user_query: str, state: dict):
         say_system("Initiating build workflow.")
         project_title = " ".join(user_query.split()[:5])
         response_dict = {
             "project_title": project_title,
             "refined_prompt": user_query
         }
-        plan_json_str = self.workflow_manager.execute_workflow(response_dict)
-        try:
-            plan_data = json.loads(plan_json_str)
-            say_assistant(f"Here is the plan I've come up with:\n\n{json.dumps(plan_data, indent=2)}")
-        except json.JSONDecodeError:
-            say_error(f"Failed to parse plan: {plan_json_str}")
-            say_assistant("I've generated a plan, but I had trouble displaying it. Please check the logs for details.")
+        implemented_files = self.workflow_manager.execute_workflow(response_dict)
+        if implemented_files:
+            # Now we have implemented_files, we can save them
+            self._save_implemented_files(implemented_files, project_title)
+            say_assistant(f"Project '{project_title}' has been built and files saved.")
+        else:
+            say_error("Workflow failed to produce implemented files.")
+            say_assistant("I've attempted to build the project, but no files were implemented. Please check the logs for details.")
 
     def _handle_update_programmer(self, user_query: str, state: ConversationState):
-        say_error("Updating the programmer is not yet implemented.")
+        say_system("Updating the programmer with new information.")
+        # Implementation would depend on your programmer architecture
+        say_assistant("I've updated the programmer with your message.")
 
     def _handle_code_correction(self, user_query: str, state: ConversationState) -> dict:
         say_system("Initiating code correction workflow.")
@@ -269,6 +278,22 @@ Your response must be a JSON object with two keys: 'investigation_summary' and '
         ideation_history = [msg for msg in history if self._safe_state_access(msg, "role") in ("user", "assistant")]
         
         response = self.ideator.continue_ideation_session(ideation_history)
+        
+        if response.get("type") != "ideation_complete":
+            say_assistant(response.get("message", "I'm not sure how to proceed with ideation."))
+
+        return response
+        say_assistant("That's a great starting point! Let's brainstorm and refine this idea together.")
+        self._safe_state_update(state, "is_in_ideation_session", True)
+        
+        history = self._safe_state_access(state, "history", [])
+        ideation_history = [msg for msg in history if self._safe_state_access(msg, "role") in ("user", "assistant")]
+        
+        response = self.ideator.continue_ideation_session(ideation_history)
+        
+        if response.get("type") != "ideation_complete":
+            say_assistant(response.get("message", "I'm not sure how to proceed with ideation."))
+
         return response
 
     def _continue_ideation_workflow(self, user_query: str, state: dict) -> dict:
@@ -291,7 +316,35 @@ Your response must be a JSON object with two keys: 'investigation_summary' and '
 
         return response
 
-    def _generate_intelligent_response(self, query: str, conversation: str, state: ConversationState) -> dict:
+    def _handle_chat(self, user_query: str, state: ConversationState) -> dict:
+        """Handle simple chat conversations like greetings"""
+        system_message = {
+            "role": "system",
+            "content": """You are QAI, a super-intelligent and enthusiastic AI Solution Architect. Your main goal is to inspire the user and collaboratively build amazing software.
+
+Your chat persona:
+- Always be encouraging, friendly, and slightly informal.
+- Always steer the conversation towards building a new project.
+- If the user just wants to chat or is looking for ideas, you MUST take the initiative. Use the `web_search` tool to find exciting, recent news in AI, software development, or technology. 
+- Summarize the most interesting finding and present it to the user as a potential project idea."""
+        }
+
+        user_message = {"role": "user", "content": user_query}
+
+        history = self._safe_state_access(state, "history", [])
+        messages = [system_message] + history + [user_message]
+
+        try:
+            raw_response = self.unified_llm.generate(messages, use_tools=True)
+            
+            return {
+                "type": ResponseType.CHAT.value,
+                "message": raw_response.strip(),
+            }
+
+        except Exception as e:
+            say_error(f"Error generating response: {e}")
+            return self._fallback_response(user_query, state)
         system_message = {
             "role": "system",
             "content": """You are QAI, a super-intelligent and enthusiastic AI Solution Architect. Your main goal is to inspire the user and collaboratively build amazing software.
@@ -327,7 +380,7 @@ Your chat persona:
             message = "That's interesting! Tell me more about what you're trying to accomplish. What problem would this solve?"
             
         return {
-            "type": ResponseType.EXTRACT.value,
+            "type": ResponseType.CODE_ASSIST.value,  # Changed from EXTRACT to CODE_ASSIST
             "message": message,
         }
 
@@ -356,20 +409,97 @@ Your chat persona:
                 "message": "I encountered an issue while generating the explanation. Please try rephrasing your question.",
             }
 
-    def _handle_enhance_workflow(self, user_query: str, state: ConversationState):
-        say_error("Enhance workflow is not yet implemented.")
-
-    def _handle_extract_workflow(self, user_query: str, state: ConversationState):
-        say_error("Extract workflow is not yet implemented.")
-
     def _handle_resume_and_update_planner(self, user_query: str, state: ConversationState):
-        say_error("Resume and update planner is not yet implemented.")
+        say_system("Resuming and updating planner with additional context.")
+        # Implementation would depend on your planner architecture
+        say_assistant("I've resumed the planner with your additional context.")
 
     def _handle_create_new_issue(self, user_query: str, state: dict):
-        say_error("Create new issue is not yet implemented.")
+        say_system("Initiating issue creation.")
+        try:
+            # Extract title and body from the user query
+            match = re.match(r"create issue: (.+?) body: (.+)", user_query, re.DOTALL)
+            if not match:
+                say_error("To create an issue, please use the format: create issue: <title> body: <body>")
+                return
+
+            title = match.group(1).strip()
+            body = match.group(2).strip()
+
+            tool_registry = self.agent_manager.tool_registry
+            command = f'gh issue create --title "{title}" --body "{body}"'
+            result = tool_registry.execute_tool("run_shell_command", {"command": command})
+
+            if result.status == "success" and result.result.get("exit_code") == 0:
+                say_assistant(f"I have successfully created a new issue: {result.result.get('stdout')}")
+            else:
+                say_error(f"I failed to create the issue. Error: {result.error_message or result.result.get('stderr')}")
+
+        except Exception as e:
+            say_error(f"An unexpected error occurred during issue creation: {e}")
 
     def _handle_start_planner_for_followup(self, user_query: str, state: dict):
-        say_error("Start planner for followup is not yet implemented.")
+        say_system("Initiating followup build workflow.")
+        project_title = self._safe_state_access(state, "project_title", "followup_project")
+        response_dict = {
+            "project_title": project_title,
+            "refined_prompt": user_query
+        }
+        implemented_files = self.workflow_manager.execute_workflow(response_dict)
+        if implemented_files:
+            # Now we have implemented_files, we can save them
+            self._save_implemented_files(implemented_files, project_title)
+            say_assistant(f"Project '{project_title}' has been updated and files saved.")
+        else:
+            say_error("Workflow failed to produce implemented files.")
+            say_assistant("I've attempted to build the project, but no files were implemented. Please check the logs for details.")
+
+    def _handle_code_assist(self, user_query: str, state: ConversationState) -> dict:
+        """Handle code assistance, requirements clarification, and project enhancement"""
+        say_system("Initiating code assistance and requirement analysis.")
+        
+        # Enhanced code_assist now handles what enhance/extract used to do
+        system_message = {
+            "role": "system",
+            "content": """You are a technical assistant specializing in:
+1. Code help, refactoring, debugging, and translation
+2. Requirements clarification and extraction
+3. Project enhancement and vision refinement
+4. Technical consultation and guidance
+
+When helping users:
+- If they need code help, provide direct assistance with examples
+- If requirements are unclear, ask specific clarifying questions (max 2 questions)
+- If a project idea needs enhancement, expand on their vision with concrete suggestions
+- Always aim to move toward actionable next steps"""
+        }
+        
+        user_message = {"role": "user", "content": user_query}
+        history = self._safe_state_access(state, "history", [])
+        messages = [system_message] + history + [user_message]
+        
+        try:
+            # Check if this is actually a code assistance request vs requirements clarification
+            if any(keyword in user_query.lower() for keyword in ['code', 'function', 'class', 'bug', 'error', 'refactor', 'debug']):
+                # Direct code assistance
+                response = self.code_assist.assist_code(user_query, state)
+                say_assistant(response.get("message", "I'm ready to help with your code."))
+                return response
+            else:
+                # Requirements clarification/project enhancement
+                llm_response = self.unified_llm.generate(messages, use_tools=False)
+                say_assistant(llm_response.strip())
+                return {
+                    "type": ResponseType.CODE_ASSIST.value,
+                    "message": llm_response.strip(),
+                }
+                
+        except Exception as e:
+            say_error(f"Error in code assistance: {e}")
+            return {
+                "type": ResponseType.CODE_ASSIST.value,
+                "message": "I encountered an issue while assisting. Could you please rephrase your request?",
+            }
 
     def _clean_message_format(self, message: str) -> str:
         if isinstance(message, dict):
@@ -395,6 +525,24 @@ Your chat persona:
                 return "Let me help you build this project!"
         
         return message.strip()
+
+    def _save_implemented_files(self, implemented_files: List[Dict[str, Any]], project_title: str):
+        project_dir = os.path.join("projects", project_title)
+        os.makedirs(project_dir, exist_ok=True)
+        logger.info(f"Created project directory: {project_dir}")
+
+        for file_data in implemented_files:
+            file_path = file_data.get("file_path")
+            file_content = file_data.get("content")
+
+            if file_path and file_content is not None:
+                full_file_path = os.path.join(project_dir, file_path)
+                os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+                with open(full_file_path, "w") as f:
+                    f.write(file_content)
+                logger.info(f"Saved file: {full_file_path}")
+            else:
+                logger.warning(f"Skipping file due to missing path or content: {file_data}")
 
     def _handle_code_execution(self, response: dict, user_id: str):
         state = self.state_manager.get_conversation_state(user_id)

@@ -27,14 +27,14 @@ class ManagementModule:
     def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
         self.llm = llm
         self.prompt_manager = prompt_manager
-        self.logger = logging.getLogger(__name__)
         self._max_retries = 2
+        self.logger = logging.getLogger(__name__)
 
     def _load_prompt(self, prompt_name: str) -> str:
         """Load prompt with proper error handling"""
         prompt_content = self.prompt_manager.get_prompt(prompt_name)
         if not prompt_content:
-            self.logger.error(f"Prompt '{prompt_name}' not found")
+            logger.error(f"Prompt '{prompt_name}' not found")
             raise ValueError(f"Required prompt '{prompt_name}' not available")
         return prompt_content
 
@@ -43,7 +43,7 @@ class ManagementModule:
         self.logger.info("Reviewing project plan")
         
         try:
-            system_prompt_content = self._load_prompt("orchestrator_manager_review_plan_prompt.md")
+            system_prompt_content = self._load_prompt("orchestrator/manager_review_plan")
             
             prompt = f"Plan to review:\n{json.dumps(plan, indent=2)}"
             
@@ -56,16 +56,16 @@ class ManagementModule:
                     
                     parsed = safe_json_extract(raw_response)
                     if self._validate_review_response(parsed):
-                        self.logger.info(f"Plan review completed: {'Approved' if parsed['approved'] else 'Rejected'}")
+                        logger.info(f"Plan review completed: {'Approved' if parsed['approved'] else 'Rejected'}")
                         return parsed
                     
-                    self.logger.warning(f"Invalid review response format on attempt {attempt + 1}")
+                    logger.warning(f"Invalid review response format on attempt {attempt + 1}")
                     
                 except Exception as e:
-                    self.logger.error(f"Review attempt {attempt + 1} failed: {e}")
+                    logger.error(f"Review attempt {attempt + 1} failed: {e}")
             
             # Fallback to auto-approval with warning
-            self.logger.warning("All review attempts failed, using auto-approval fallback")
+            logger.warning("All review attempts failed, using auto-approval fallback")
             return {
                 "approved": True, 
                 "feedback": "Auto-approved after review failure",
@@ -74,7 +74,7 @@ class ManagementModule:
             }
             
         except Exception as e:
-            self.logger.error(f"Plan review failed: {e}")
+            logger.error(f"Plan review failed: {e}")
             return {
                 "approved": False,
                 "feedback": f"Review system error: {str(e)}",
@@ -100,10 +100,10 @@ class ManagementModule:
 
     def provide_correction(self, implementation: Dict, validation_error: str) -> Dict:
         """Provide corrective specifications for implementation issues"""
-        self.logger.info("Generating correction specifications")
+        logger.info("Generating correction specifications")
         
         try:
-            system_prompt_content = self._load_prompt("orchestrator_manager_provide_correction_prompt.md")
+            system_prompt_content = self._load_prompt("orchestrator/manager_provide_correction")
             
             prompt = f"""
 Implementation with issue:
@@ -124,7 +124,7 @@ Please provide specific corrections:
                 return parsed
             
             # Fallback correction
-            self.logger.warning("Using fallback correction specification")
+            logger.warning("Using fallback correction specification")
             return {
                 "spec": {"notes": f"Fix validation error: {validation_error}"},
                 "notes": "Automated fallback correction",
@@ -132,7 +132,7 @@ Please provide specific corrections:
             }
             
         except Exception as e:
-            self.logger.error(f"Correction generation failed: {e}")
+            logger.error(f"Correction generation failed: {e}")
             return {
                 "spec": {"emergency_fix": True, "notes": "System error - manual review required"},
                 "notes": f"Error in correction system: {e}",

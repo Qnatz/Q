@@ -9,9 +9,9 @@ import re
 from typing import Any, Dict, List, Optional
 from .utils import json_dumps_safe
 from .config import Config
+from core.settings import settings
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Optional Gemini imports
 try:
@@ -146,7 +146,7 @@ class GeminiBackend:
         self.tool_specs = tool_specs or []
 
         # configure API key from env (caller should set)
-        genai.configure(api_key=os.getenv(cfg.gemini_api_key_env))
+        genai.configure(api_key=settings.gemini_api_key)
 
         # Create model client
         self.client = genai.GenerativeModel(model_name=cfg.gemini_model)
@@ -173,52 +173,45 @@ class GeminiBackend:
     def _to_gemini_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Convert OpenAI-style messages to Gemini `contents` format.
+        - Merge system messages into the first user message as a prefix (Gemini convention).
         - Map roles: user -> user, assistant -> model, tool -> tool (with functionResponse)
-        - System messages are not supported and will raise an error.
         """
         out = []
+        system_buf = []
         for m in messages:
             role = m.get("role")
             content = m.get("content", "")
-            logger.debug(f"Converting message: {m}")
-
             if role == "system":
-                logger.error("System messages are not supported by the Gemini backend.")
-                raise ValueError(
-                    "System messages are not supported by the Gemini backend."
-                )
-
+                if content:
+                    system_buf.append(str(content))
+                continue
             if role == "user":
-                out.append({"role": "user", "parts": [str(content)]})
-            elif role == "assistant":
+                merged = ("\n\n".join(system_buf) + ("\n\n" if system_buf else "") + str(content))
+                if content or system_buf:
+                    out.append({"role": "user", "parts": [merged]})
+                system_buf = []
+                continue
+            if role == "assistant":
                 out.append({"role": "model", "parts": [str(content)]})
-            elif role == "tool":
+                continue
+            if role == "tool":
+                # expect m["name"] and m["content"] (content may be dict or string)
                 name = m.get("name") or m.get("tool_name")
-                if not name:
-                    logger.error(f"Tool message missing name: {m}")
-                    raise ValueError("Tool message must have a name.")
-
                 resp_payload = m.get("content")
-                out.append(
-                    {
-                        "role": "tool",
-                        "parts": [
-                            {
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": resp_payload,
-                                }
-                            }
-                        ],
-                    }
-                )
-            else:
-                logger.warning(
-                    f"Unknown role '{role}' in message: {m}. Treating as user message."
-                )
-                out.append({"role": "user", "parts": [str(content)]})
+                # If content is JSON-serializable dict, include as-is
+                try:
+                    json.loads(resp_payload) if isinstance(resp_payload, str) else None
+                    resp_for_part = resp_payload
+                except Exception:
+                    resp_for_part = resp_payload
+                out.append({"role": "tool", "parts": [{"functionResponse": {"name": name, "response": resp_for_part}}]})
+                continue
+            # default: treat as user text
+            out.append({"role": "user", "parts": [str(content)]})
 
-        logger.debug(f"Converted messages: {out}")
+        # if system_buf leftover and no user added, insert as first user
+        if system_buf and (not out or out[0].get("role") != "user"):
+            out.insert(0, {"role": "user", "parts": ["\n\n".join(system_buf)]})
         return out
 
     def chat(
@@ -239,6 +232,7 @@ class GeminiBackend:
             kwargs["tools"] = self.gemini_tools
 
         logger.debug(f"GeminiBackend.chat request kwargs: {kwargs}")
+        logger.debug(f"GeminiBackend.generate request messages: {messages}")
         resp = self.client.generate_content(**kwargs, request_options={'timeout': 600})
         logger.debug(f"GeminiBackend.chat raw response: {resp}")
         return resp
@@ -246,19 +240,25 @@ class GeminiBackend:
     @staticmethod
     def extract_text(resp_obj: Any) -> str:
         logger.debug(f"GeminiBackend.extract_text input: {resp_obj}")
-        logger.debug(
-            f"GeminiBackend.extract_text prompt_feedback: {getattr(resp_obj, 'prompt_feedback', 'N/A')}"
-        )
-        logger.debug(
-            f"GeminiBackend.extract_text candidates: {getattr(resp_obj, 'candidates', 'N/A')}"
-        )
         try:
+            if hasattr(resp_obj, 'prompt_feedback') and resp_obj.prompt_feedback.block_reason:
+                return json.dumps({"error": f"Prompt was blocked due to {resp_obj.prompt_feedback.block_reason.name}"})
+            
             text = getattr(resp_obj, "text", "") or ""
+            
+            match = re.search(r"```json\n({.*?})\n```", text, re.DOTALL)
+            if match:
+                text = match.group(1)
+
+            if isinstance(text, dict):
+                return json.dumps(text)
+
             logger.debug(f"GeminiBackend.extract_text output: {text}")
             return text
         except Exception:
             logger.exception("Error extracting text from Gemini response.")
-            return ""
+            return json.dumps({"error": "Error extracting text from Gemini response."})
+
 
     @staticmethod
     def extract_function_calls(resp_obj: Any) -> List[Dict[str, Any]]:

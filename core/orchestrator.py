@@ -1,6 +1,7 @@
 # orchestrator.py
 import json
 import logging
+logger = logging.getLogger(__name__)
 import sys
 from datetime import datetime
 
@@ -18,8 +19,6 @@ from core.ui import say_assistant, say_error, say_system, say_user
 from core.workflow_manager import WorkflowManager
 from memory.prompt_manager import PromptManager
 from core.ide_server import IDEServer
-
-logger = logging.getLogger(__name__)
 console = Console()
 
 
@@ -37,6 +36,7 @@ class OrchestratorAgent:
             self.agent_manager.programmer,
             self.agent_manager.qa,
             self.agent_manager.reviewer,
+            self.state_manager,
         )
         self.response_handler = ResponseHandler(
             self.agent_manager.unified_llm,
@@ -47,6 +47,7 @@ class OrchestratorAgent:
             self.agent_manager.ideator,
             self.router,
             self.agent_manager,
+            self.agent_manager.code_assist,
         )
         # Initialize and start IDE server
         self.ide_server = IDEServer()
@@ -67,12 +68,27 @@ class OrchestratorAgent:
 
             state.turn += 1
 
-            # Route the query
-            route, message = self.router.get_route(user_query, state)
+            # Route the query or continue ideation
+            if state.is_in_ideation_session:
+                route = "ideation"
+                message = user_query # Pass the user query directly to the ideation handler
+            else:
+                route, message = self.router.get_route(user_query, state)
             response_dict = {"type": route, "message": message}
 
             # Handle the response
             self.response_handler.handle_response(response_dict, user_id)
+
+            # Check if ideation is complete and a build is pending
+            if state.pending_build_confirmation:
+                refined_prompt = state.pending_build_confirmation.get("refined_prompt")
+                project_title = state.pending_build_confirmation.get("project_title")
+                if refined_prompt and project_title:
+                    self.response_handler.initiate_build_workflow(refined_prompt, state)
+                    response_dict = {"type": "build_initiated", "message": f"Initiating build for {project_title}."}
+                else:
+                    response_dict = {"type": "error", "message": "Ideation complete, but missing refined prompt or project title for build."}
+                state.pending_build_confirmation = None # Clear the pending build confirmation
 
             state.history.append(
                 {

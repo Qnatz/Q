@@ -20,7 +20,7 @@ class Config:
     api_key: Optional[str] = None  # if required by HTTP backend
 
     # Gemini specific
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash"
     gemini_api_key_env: str = "GEMINI_API_KEY"
 
     # CLI backend

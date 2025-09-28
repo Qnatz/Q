@@ -3,9 +3,12 @@ import os
 import contextlib
 import builtins
 from typing import Any
+import logging
 
 from rich.console import Console
 from rich.panel import Panel
+
+logger = logging.getLogger(__name__)
 
 # Initialize console here so splash() and other helpers can safely use it.
 console = Console()
@@ -25,13 +28,13 @@ def splash() -> None:
 
 
 def say_user(msg: str) -> None:
-    """Print a user message panel."""
-    console.print(Panel.fit(msg, title="[bold blue]You[/]", border_style="blue"))
+    """Print a user message without a panel."""
+    console.print(f"[bold blue]You > [/bold blue]{msg}")
 
 
 def say_assistant(msg: str) -> None:
     """Print an assistant message panel."""
-    console.print(Panel.fit(msg, title="[bold red]Assistant[/]", border_style="red"))
+    console.print(Panel(msg, title="[bold red]Assistant[/]", border_style="red", width=80))
 
 
 def say_system(msg: str) -> None:
@@ -45,5 +48,6 @@ def say_success(msg: str) -> None:
 
 
 def say_error(msg: str) -> None:
-    """Print an error panel (red, with cross)."""
+    """Print an error panel (red, with cross) and log the error."""
     console.print(Panel.fit(f"❌ {msg}", title="[bold red]Error[/]", border_style="red"))
+    logger.error(msg)

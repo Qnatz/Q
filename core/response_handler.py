@@ -527,7 +527,9 @@ When helping users:
         return message.strip()
 
     def _save_implemented_files(self, implemented_files: List[Dict[str, Any]], project_title: str):
-        project_dir = os.path.join("projects", project_title)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        project_title_with_timestamp = f"{project_title}-{timestamp}"
+        project_dir = os.path.join("projects", project_title_with_timestamp)
         os.makedirs(project_dir, exist_ok=True)
         logger.info(f"Created project directory: {project_dir}")
 

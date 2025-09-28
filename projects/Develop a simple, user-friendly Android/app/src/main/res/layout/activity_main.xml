@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/totalExpenseTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Total Expenses: $0.00"
+        android:textSize="18sp"/>
+
+    <TextView
+        android:id="@+id/budgetTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Budget: $0.00"
+        android:textSize="18sp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <EditText
+            android:id="@+id/budgetAmountEditText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Budget Amount"
+            android:inputType="numberDecimal"/>
+
+        <Button
+            android:id="@+id/setBudgetButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Set Budget"/>
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <EditText
+            android:id="@+id/expenseDescriptionEditText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Expense Description"/>
+
+        <EditText
+            android:id="@+id/expenseAmountEditText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Expense Amount"
+            android:inputType="numberDecimal"/>
+
+        <EditText
+            android:id="@+id/expenseCategoryEditText"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="Category"/>
+
+        <Button
+            android:id="@+id/addExpenseButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Add Expense"/>
+
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/viewReportButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="View Report"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/expenseRecyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+</LinearLayout>

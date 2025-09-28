@@ -35,7 +35,7 @@ class IdeationModule:
 
     def _get_ideation_prompt(self) -> str:
         """Get ideation prompt with dynamic opening line"""
-        prompt = self.prompt_manager.get_prompt("ideation_prompt.md")
+        prompt = self.prompt_manager.get_prompt("ideation_prompt")
         if not prompt:
             self.logger.warning("Ideation prompt not found, using fallback")
             return self._get_fallback_ideation_prompt()

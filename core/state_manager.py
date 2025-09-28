@@ -76,23 +76,40 @@ class StateManager:
         Returns a ConversationState object that supports both attribute and dictionary access.
         """
         if user_id not in self.conversation_states:
-            self.conversation_states[user_id] = ConversationState(
-                user_id=user_id,
-                history=[],
-                history_summary="",
-                extracted_info={},
-                pending_build=None,
-                pending_build_confirmation=None,
-                is_in_ideation_session=False,
-                is_in_correction_session=False,
-                correction_phase=None,
-                module_status={"planner": "idle", "programmer": "idle"},
-                current_phase="conversation",
-                turn=0,
-                user_context=None
-            )
+            # Try to load from persistent memory
+            persisted_state_data = self._unified_memory.get_state(f"conversation_state_{user_id}")
+            if persisted_state_data:
+                try:
+                    # Ensure all fields are present, providing defaults for new ones
+                    loaded_state = ConversationState(**persisted_state_data)
+                    self.conversation_states[user_id] = loaded_state
+                    logger.info(f"Loaded conversation state for user {user_id} from memory.")
+                except TypeError as e:
+                    logger.error(f"Failed to load conversation state for user {user_id}: {e}. Initializing new state.")
+                    self.conversation_states[user_id] = self._initialize_new_conversation_state(user_id)
+            else:
+                self.conversation_states[user_id] = self._initialize_new_conversation_state(user_id)
         return self.conversation_states[user_id]
 
+    def _initialize_new_conversation_state(self, user_id: str) -> ConversationState:
+        return ConversationState(
+            user_id=user_id,
+            history=[],
+            history_summary="",
+            extracted_info={},
+            pending_build=None,
+            pending_build_confirmation=None,
+            is_in_ideation_session=False,
+            is_in_correction_session=False,
+            correction_phase=None,
+            module_status={"planner": "idle", "programmer": "idle"},
+            current_phase="conversation",
+            turn=0,
+            user_context=None
+        )
+
     def _update_conversation_state(self, user_id: str, state: ConversationState):
-        """Update in-memory conversation state"""
+        """Update in-memory conversation state and persist to UnifiedMemory"""
         self.conversation_states[user_id] = state
+        self._unified_memory.set_state(f"conversation_state_{user_id}", state.to_dict())
+        logger.debug(f"Persisted conversation state for user {user_id}.")

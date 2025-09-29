@@ -10,6 +10,7 @@ from agent_processes.qa_module import QAModule
 from agent_processes.research_module import ResearchModule
 from agent_processes.review_module import ReviewModule
 from agent_processes.code_assist_module import CodeAssistAgent
+from core.llm_service import LLMService
 from core.settings import settings
 from memory.prompt_manager import PromptManager
 from qllm.config import Config
@@ -26,8 +27,9 @@ class AgentManager:
             self.unified_llm = self._initialize_llm()
             self.tool_registry = create_default_tool_registry(llm=self.unified_llm)
             self.prompt_manager = PromptManager()
-            self.reviewer = ReviewModule(self.unified_llm, self.prompt_manager)
-            self.code_assist = CodeAssistAgent(self.unified_llm, self.tool_registry, self.prompt_manager)
+            self.llm_service = LLMService(self.unified_llm, self.prompt_manager)
+            self.reviewer = ReviewModule(self.llm_service, self.prompt_manager)
+            self.code_assist = CodeAssistAgent(self.llm_service, self.tool_registry, self.prompt_manager)
             self._initialize_agents() # Call to initialize agents
         except Exception as e:
             self.logger.error(f"Failed to initialize AgentManager: {e}")
@@ -68,15 +70,15 @@ class AgentManager:
                     )
                 elif name == "ideator":
                     agent_instance = agent_class(
-                        self.unified_llm, self.prompt_manager
+                        self.llm_service, self.prompt_manager
                     )
                 elif name == "manager" or name == "researcher":
-                    agent_instance = agent_class(self.unified_llm, self.prompt_manager)
+                    agent_instance = agent_class(self.llm_service, self.prompt_manager)
                 elif name == "planner":
-                    agent_instance = agent_class(self.unified_llm, self.prompt_manager)
+                    agent_instance = agent_class(self.llm_service, self.prompt_manager)
                 else:
                     agent_instance = agent_class(
-                        self.unified_llm, self.prompt_manager, self.tool_registry
+                        self.llm_service, self.prompt_manager, self.tool_registry
                     )
 
                 setattr(self, name, agent_instance);

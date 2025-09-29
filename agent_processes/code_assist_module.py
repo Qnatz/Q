@@ -34,11 +34,9 @@ class CodeAssistAgent:
             "translate", "document", "test", "review"
         }
 
-from qllm.unified_llm import UnifiedLLM
-
 class CodeAssistModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
-        self.llm = llm
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+        self.llm_service = llm_service
         self.prompt_manager = prompt_manager
 
     def get_assistance(self, action_type: str, user_query: str, context: str) -> Dict[str, any]:
@@ -48,18 +46,24 @@ class CodeAssistModule:
         if not prompt:
             return {"error": f"Prompt '{prompt_name}' not found."}
 
-        formatted_prompt = prompt.format(action=action_type, user_query=user_query, context=context)
-
-        messages = [
-            {"role": "system", "content": formatted_prompt},
-            {"role": "user", "content": user_query},
-        ]
+        # The LLMService's generate_code function can handle the prompt formatting.
+        # We just need to provide the user query and the context.
+        
+        # Detect language from context if possible, otherwise let generate_code handle it.
+        language = self.llm_service._detect_language_with_context(user_query, context)
 
         try:
-            response = self.llm.generate(messages)
+            # Use the more specific generate_code method from LLMService
+            response = self.llm_service.generate_code(
+                prompt=user_query,
+                language=language,
+                system_message=prompt.format(action=action_type, user_query=user_query, context=context)
+            )
             return json.loads(response)
         except json.JSONDecodeError:
-            return {"error": "Invalid JSON response from the language model."}
+            # If the response is not JSON, we can still return it as a string.
+            # This is useful for explanations or other non-code responses.
+            return {"explanation": response}
         except Exception as e:
             return {"error": f"An unexpected error occurred: {e}"}
 

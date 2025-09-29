@@ -21,8 +21,9 @@ class SummaryCache:
     timestamp: float
 
 class ContextBuilder:
-    def __init__(self, unified_llm, cache_size: int = 100):
+    def __init__(self, unified_llm, unified_memory, cache_size: int = 100):
         self.unified_llm = unified_llm
+        self.unified_memory = unified_memory
         self.cache_size = cache_size
         self._summary_cache: Dict[str, SummaryCache] = {}
         
@@ -127,21 +128,27 @@ class ContextBuilder:
 
     def build_conversation_context(self, state: dict) -> str:
         """Build optimized conversation context"""
-        recent_messages = state["history"][-MAX_RECENT_TURNS:]
-        recent_context = "\n".join(
-            f"{msg['role']}: {msg['content']}" 
-            for msg in recent_messages
-        )
-        
-        # Handle older messages with summary
-        if len(state["history"]) > MAX_RECENT_TURNS:
-            old_messages = state["history"][:-MAX_RECENT_TURNS]
-            summary = state.get("history_summary") or self.summarize_old_history(old_messages)
-            state["history_summary"] = summary
-            
-            return (
-                f"Previous context summary: {summary}\n\n"
-                f"Recent conversation:\n{recent_context}"
-            )
-        
-        return recent_context
+        user_id = state.get("user_id", "default_user")
+        current_query = state["history"][-1]["content"]
+
+        context = self.unified_memory.get_conversation_context(user_id, current_query)
+
+        context_str = ""
+        if context.get("relevant_facts"):
+            context_str += "Relevant Facts:\n"
+            for fact in context["relevant_facts"]:
+                context_str += f"- {fact['content']}\n"
+            context_str += "\n"
+
+        if context.get("semantic_context"):
+            context_str += "Similar conversation snippets:\n"
+            for snippet in context["semantic_context"]:
+                context_str += f"- {snippet['content']}\n"
+            context_str += "\n"
+
+        if context.get("recent_conversation"):
+            context_str += "Recent conversation:\n"
+            for msg in context["recent_conversation"]:
+                context_str += f"{msg['metadata']['role']}: {msg['content']}\n"
+
+        return context_str

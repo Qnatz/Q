@@ -55,13 +55,14 @@ When the agent is launched from within a project directory and the user's reques
 
 ## 4. Key Component Deep Dive
 
-*   **The Orchestrator (`core/orchestrator.py`):** The brain of the agent. It now acts as the central **manager**. Its `process_query` method uses the `Router` to get a routing decision and then dispatches the request to the appropriate handler within the `ResponseHandler`. It also manages the `is_in_ideation_session` and `is_in_correction_session` flags, and handles `pending_build_confirmation`.
+*   **The Orchestrator (`core/orchestrator.py`):** The brain of the agent. It now acts as the central **manager**. Its `process_query` method uses the `Router` to get a routing decision and then dispatches the request to the appropriate handler within the `ResponseHandler`. It also manages the `is_in_ideation_session` and `is_in_correction_session` flags, and handles `pending_build_confirmation`. Interactive mode for project selection and conversation has been restored.
 
 *   **The Router (`core/router.py`):** This is a new, critical component. It acts as the **decision-maker**. It uses the `manager_routing_prompt.md`, along with the conversation history and the `module_status` (planner/programmer idle/running/interrupted) from the `StateManager`, to determine the most appropriate `route` for the user's request. It returns both the `route` and a user-facing `message`.
 
 *   **The ResponseHandler (`core/response_handler.py`):** This component now acts as the central **dispatcher**. Its `handle_response` method receives the `route` from the `Orchestrator` and calls the corresponding internal method (e.g., `_handle_ideation`, `_continue_correction_workflow`, `_generate_intelligent_response`) to execute the specific workflow logic.
 
 *   **Specialized Modules (`agent_processes/`):** These are specialized modules within the single, core agent. They are now activated by the `ResponseHandler` based on the routing decision.
+    *   **Refactoring:** All agent modules (`CodeAssistModule`, `IdeationModule`, `ManagementModule`, `PlanningModule`, `ProgrammingModule`, `ResearchModule`, `ReviewModule`) have been refactored to use `LLMService` for centralized LLM interactions. This involved updating their `__init__` methods to accept an `LLMService` instance and correcting all `generate` method calls to `self.llm_service.llm.generate()`. Unused imports were also removed from these modules.
     *   **`IdeationModule`:** Fully conversational, managing multi-turn dialogues to refine ideas.
     *   `PlanningModule`, `ProgrammingModule`, etc.: These modules are activated *after* the ideation workflow is complete and the user has given approval.
 
@@ -69,8 +70,7 @@ When the agent is launched from within a project directory and the user's reques
 
 *   **The Tool System (`tools/tool_registry.py`):** This system provides the agent's modules with the capabilities to perform concrete actions, such as planning, coding, and analysis.
 
-*   **LLM & Memory (`qllm/`, `memory/`):** These foundational layers provide the agent with intelligence and context. The `UnifiedMemory` system (`memory/unified_memory.py`) implements the Retrieval-Augmented Generation (RAG) functionality, using `ChromaDB` for vector-based semantic search and an ONNX model for generating embeddings.
-
+*   **LLM & Memory (`qllm/`, `memory/`):** These foundational layers provide the agent with intelligence and context. The `UnifiedMemory` system (`memory/unified_memory.py`) implements the Retrieval-Augmented Generation (RAG) functionality, using `ChromaDB` for vector-based semantic search and an ONNX model for generating embeddings. The `ContextBuilder` (`core/context_builder.py`) now leverages `UnifiedMemory.get_conversation_context` to build richer, more context-aware prompts, incorporating recent conversation, semantic search results, and relevant facts about the user.
 ---
 
 ## 5. Data and State Management

@@ -1,9 +1,13 @@
 import os
 import sys
 import argparse
+import dotenv
 
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import dotenv
+dotenv.load_dotenv() # Load environment variables from .env file
 
 from utils.logging_config import setup_logging
 setup_logging()

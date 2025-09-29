@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 import logging
 
-from qllm.unified_llm import UnifiedLLM
+from core.llm_service import LLMService
 from utils.json_utils import safe_json_extract
 from memory.prompt_manager import PromptManager
 
@@ -24,8 +24,8 @@ class CorrectionResult:
     priority: str = "medium"  # low, medium, high, critical
 
 class ManagementModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
-        self.llm = llm
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+        self.llm_service = llm_service
         self.prompt_manager = prompt_manager
         self._max_retries = 2
         self.logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class ManagementModule:
             
             for attempt in range(self._max_retries):
                 try:
-                    raw_response = self.llm.generate([
+                    raw_response = self.llm_service.llm.generate([
                         {"role": "system", "content": system_prompt_content},
                         {"role": "user", "content": prompt}
                     ], use_tools=False)
@@ -114,7 +114,7 @@ Validation error encountered:
 
 Please provide specific corrections:
 """
-            raw_response = self.llm.generate([
+            raw_response = self.llm_service.llm.generate([
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": prompt}
             ], use_tools=False)

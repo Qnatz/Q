@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, List
 from core.config import ResponseType, MAX_TURNS_BEFORE_BUILD
 from utils.ui_helpers import say_assistant, say_error, say_system
 from core.state_manager import ConversationState
+from schemas.project_schema import ProjectMetadata
 import logging
 import os
 
@@ -273,41 +274,45 @@ Your response must be a JSON object with two keys: 'investigation_summary' and '
     def _handle_ideation(self, user_query: str, state: ConversationState) -> dict:
         say_assistant("That's a great starting point! Let's brainstorm and refine this idea together.")
         self._safe_state_update(state, "is_in_ideation_session", True)
-        
-        history = self._safe_state_access(state, "history", [])
-        ideation_history = [msg for msg in history if self._safe_state_access(msg, "role") in ("user", "assistant")]
-        
-        response = self.ideator.continue_ideation_session(ideation_history)
-        
-        if response.get("type") != "ideation_complete":
-            say_assistant(response.get("message", "I'm not sure how to proceed with ideation."))
-
-        return response
-        say_assistant("That's a great starting point! Let's brainstorm and refine this idea together.")
-        self._safe_state_update(state, "is_in_ideation_session", True)
-        
-        history = self._safe_state_access(state, "history", [])
-        ideation_history = [msg for msg in history if self._safe_state_access(msg, "role") in ("user", "assistant")]
-        
-        response = self.ideator.continue_ideation_session(ideation_history)
-        
-        if response.get("type") != "ideation_complete":
-            say_assistant(response.get("message", "I'm not sure how to proceed with ideation."))
-
-        return response
+        self._safe_state_update(state, "ideation_session_start_index", len(state.history))
+        # Delegate to _continue_ideation_workflow for actual processing
+        return self._continue_ideation_workflow(user_query, state)
 
     def _continue_ideation_workflow(self, user_query: str, state: dict) -> dict:
-        ideation_history = [msg for msg in self._safe_state_access(state, "history", []) if self._safe_state_access(msg, "role") in ("user", "assistant")]
+        ideation_start_index = self._safe_state_access(state, "ideation_session_start_index", 0)
+        full_history = self._safe_state_access(state, "history", [])
+        # Filter history to only include messages from the current ideation session
+        ideation_history = [msg for msg in full_history[ideation_start_index:] if self._safe_state_access(msg, "role") in ("user", "assistant")]
         
         response = self.ideator.continue_ideation_session(ideation_history)
 
         if response.get("type") == "ideation_complete":
             say_assistant(response["confirmation_message"])
+            
+            project_name = response["project_title"]
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            project_id = f"{project_name.replace(' ', '_').lower()}-{timestamp}"
+            
+            project_metadata = ProjectMetadata(
+                project_id=project_id,
+                project_name=project_name,
+                refined_prompt=response["refined_prompt"],
+                user_id=state.user_id,
+                status="ideation_complete",
+                completion_rate=0.1, # 10% complete after ideation
+                conversation_history=state.history # Store full history for context
+            )
+            self.state_manager.unified_memory.store_project_metadata(project_metadata)
+            
+            # Update ConversationState with the new project_id and pending build info
+            self._safe_state_update(state, "current_project_id", project_id)
             self._safe_state_update(state, "pending_build_confirmation", {
                 "type": ResponseType.BUILD.value,
                 "refined_prompt": response["refined_prompt"],
-                "project_title": response["project_title"]
+                "project_title": project_name, # Keep original project title for display
+                "project_id": project_id # Pass the generated project_id
             })
+
             self._safe_state_update(state, "is_in_ideation_session", False)
             return {"type": "ideation_complete", "message": response["confirmation_message"]}
         else:
@@ -345,33 +350,6 @@ Your chat persona:
         except Exception as e:
             say_error(f"Error generating response: {e}")
             return self._fallback_response(user_query, state)
-        system_message = {
-            "role": "system",
-            "content": """You are QAI, a super-intelligent and enthusiastic AI Solution Architect. Your main goal is to inspire the user and collaboratively build amazing software.
-
-Your chat persona:
-- Always be encouraging, friendly, and slightly informal.
-- Always steer the conversation towards building a new project.
-- If the user just wants to chat or is looking for ideas, you MUST take the initiative. Use the `web_search` tool to find exciting, recent news in AI, software development, or technology. 
-- Summarize the most interesting finding and present it to the user as a potential project idea."""
-        }
-
-        user_message = {"role": "user", "content": query}
-
-        history = self._safe_state_access(state, "history", [])
-        messages = [system_message] + history + [user_message]
-
-        try:
-            raw_response = self.unified_llm.generate(messages, use_tools=True)
-            
-            return {
-                "type": ResponseType.CHAT.value,
-                "message": raw_response.strip(),
-            }
-
-        except Exception as e:
-            say_error(f"Error generating response: {e}")
-            return self._fallback_response(query, state)
 
     def _fallback_response(self, query: str, state: ConversationState) -> dict:
         if any(word in query.lower() for word in ['hello', 'hi', 'hey']):
@@ -532,6 +510,18 @@ When helping users:
         project_dir = os.path.join("projects", project_title_with_timestamp)
         os.makedirs(project_dir, exist_ok=True)
         logger.info(f"Created project directory: {project_dir}")
+
+        # Update ProjectMetadata after files are saved
+        state = self.state_manager.get_conversation_state("default_user") # Assuming default user for now
+        current_project_id = self._safe_state_access(state, "current_project_id")
+        if current_project_id:
+            project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
+            if project_metadata:
+                project_metadata.status = "completed"
+                project_metadata.completion_rate = 1.0
+                project_metadata.last_updated = datetime.now().isoformat()
+                self.state_manager.unified_memory.store_project_metadata(project_metadata)
+                logger.info(f"Updated ProjectMetadata for {current_project_id} to completed.")
 
         for file_data in implemented_files:
             file_path = file_data.get("file_path")

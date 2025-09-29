@@ -23,6 +23,8 @@ class ConversationState:
     current_phase: str = "conversation"
     turn: int = 0
     user_context: Optional[Dict[str, Any]] = None
+    current_project_id: Optional[str] = None
+    ideation_session_start_index: int = 0
     
     def __post_init__(self):
         if self.extracted_info is None:
@@ -57,18 +59,18 @@ class StateManager:
         return self._unified_memory
 
     def get_state(self, key: str, default: Any = None) -> Any:
-        return self._unified_memory.get_state(key, default)
+        return self._unified_memory.tinydb.get_state(key, default)
 
     def set_state(self, key: str, value: Any):
-        self._unified_memory.set_state(key, value)
+        self._unified_memory.tinydb.store_state(key, value)
 
     def append_to_state(self, key: str, value: Any):
         # Assuming state is a list, append to it. If not, create a new list.
-        current_state = self._unified_memory.get_state(key, [])
+        current_state = self._unified_memory.tinydb.get_state(key, [])
         if not isinstance(current_state, list):
             current_state = [current_state] # Convert to list if not already
         current_state.append(value)
-        self._unified_memory.set_state(key, current_state)
+        self._unified_memory.tinydb.store_state(key, current_state)
 
     def get_conversation_state(self, user_id: str) -> ConversationState:
         """
@@ -77,7 +79,7 @@ class StateManager:
         """
         if user_id not in self.conversation_states:
             # Try to load from persistent memory
-            persisted_state_data = self._unified_memory.get_state(f"conversation_state_{user_id}")
+            persisted_state_data = self._unified_memory.tinydb.get_state(f"conversation_state_{user_id}")
             if persisted_state_data:
                 try:
                     # Ensure all fields are present, providing defaults for new ones
@@ -111,5 +113,17 @@ class StateManager:
     def _update_conversation_state(self, user_id: str, state: ConversationState):
         """Update in-memory conversation state and persist to UnifiedMemory"""
         self.conversation_states[user_id] = state
-        self._unified_memory.set_state(f"conversation_state_{user_id}", state.to_dict())
+        self._unified_memory.tinydb.store_state(f"conversation_state_{user_id}", state.to_dict())
         logger.debug(f"Persisted conversation state for user {user_id}.")
+
+    def clear_conversation_history(self, user_id: str):
+        """
+        Clears the conversation history for a given user from persistent storage.
+        """
+        try:
+            self._unified_memory.tinydb.delete_state(f"conversation_state_{user_id}")
+            if user_id in self.conversation_states:
+                del self.conversation_states[user_id]
+            logger.info(f"Cleared conversation history for user {user_id}.")
+        except Exception as e:
+            logger.error(f"Failed to clear conversation history for user {user_id}: {e}")

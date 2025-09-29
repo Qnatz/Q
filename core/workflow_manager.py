@@ -2,7 +2,12 @@ import logging
 from core.ui import agent_log, say_system, say_success, say_error
 from utils.json_utils import safe_json_extract
 from schemas.plan_schema import PLAN_SCHEMA
+from schemas.project_schema import ProjectMetadata
 from utils.validation_utils import validate
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class WorkflowManager:
     def __init__(self, planner, manager, programmer, qa, reviewer, state_manager):
@@ -32,6 +37,19 @@ class WorkflowManager:
             # Phase 1: Planning
             plan = self.planner.generate_plan(project_title, refined_prompt, self.state_manager.get_conversation_state("default_user").history)
             if plan:
+                # Retrieve and update ProjectMetadata
+                state = self.state_manager.get_conversation_state("default_user")
+                current_project_id = state.get("current_project_id")
+                if current_project_id:
+                    project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
+                    if project_metadata:
+                        project_metadata.plan = plan
+                        project_metadata.status = "planning_complete"
+                        project_metadata.completion_rate = 0.25 # 25% complete after planning
+                        project_metadata.last_updated = datetime.now().isoformat()
+                        self.state_manager.unified_memory.store_project_metadata(project_metadata)
+                        logger.info(f"Updated ProjectMetadata for {current_project_id} after planning.")
+
                 try:
                     validate(plan, PLAN_SCHEMA)
                 except Exception as e:
@@ -65,15 +83,48 @@ class WorkflowManager:
             agent_log("Manager", "Plan approved and validated.")
 
             # Phase 3: Implementation
+            state = self.state_manager.get_conversation_state("default_user")
+            current_project_id = state.get("current_project_id")
+            if current_project_id:
+                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
+                if project_metadata:
+                    project_metadata.status = "programming"
+                    project_metadata.completion_rate = 0.50 # 50% complete during programming
+                    project_metadata.last_updated = datetime.now().isoformat()
+                    self.state_manager.unified_memory.store_project_metadata(project_metadata)
+                    logger.info(f"Updated ProjectMetadata for {current_project_id} to programming phase.")
+
             implemented_files_generator = self.programmer.implement(plan, project_title)
             implemented_files = list(implemented_files_generator)
             agent_log("Programmer", f"Successfully implemented {len(implemented_files)} files.")
 
             # Phase 4: Quality Assurance
+            state = self.state_manager.get_conversation_state("default_user")
+            current_project_id = state.get("current_project_id")
+            if current_project_id:
+                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
+                if project_metadata:
+                    project_metadata.status = "qa"
+                    project_metadata.completion_rate = 0.75 # 75% complete during QA
+                    project_metadata.last_updated = datetime.now().isoformat()
+                    self.state_manager.unified_memory.store_project_metadata(project_metadata)
+                    logger.info(f"Updated ProjectMetadata for {current_project_id} to QA phase.")
+
             qa_report_path = self.qa.test(implemented_files, plan=plan)
             agent_log("QA", f"Quality assurance completed: {qa_report_path}")
 
             # Phase 5: Code Review
+            state = self.state_manager.get_conversation_state("default_user")
+            current_project_id = state.get("current_project_id")
+            if current_project_id:
+                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
+                if project_metadata:
+                    project_metadata.status = "review"
+                    project_metadata.completion_rate = 0.90 # 90% complete during review
+                    project_metadata.last_updated = datetime.now().isoformat()
+                    self.state_manager.unified_memory.store_project_metadata(project_metadata)
+                    logger.info(f"Updated ProjectMetadata for {current_project_id} to review phase.")
+
             review_report_path = self.reviewer.review(implemented_files)
             agent_log("Reviewer", f"Code review completed: {review_report_path}")
 

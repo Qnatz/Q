@@ -2,7 +2,7 @@ import json
 import re
 from typing import Dict, Any, List, Optional
 
-from qllm.unified_llm import UnifiedLLM
+from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager
 from schemas.plan_schema import PLAN_SCHEMA
 from utils.json_utils import safe_json_extract
@@ -30,8 +30,8 @@ def forgiving_json_extract(text: str) -> Optional[Dict[str, Any]]:
 
 
 class PlanningModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
-        self.llm = llm
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+        self.llm_service = llm_service
         self.prompt_manager = prompt_manager
         self._max_retries = 3
 
@@ -88,7 +88,7 @@ class PlanningModule:
 
         for attempt in range(self._max_retries):
             try:
-                response_text = self.llm.generate(messages, use_tools=False)
+                response_text = self.llm_service.llm.generate(messages, use_tools=False)
                 logger.info(f"LLM Raw Response: {response_text}")
                 plan = forgiving_json_extract(response_text)
                 logger.info(f"Extracted Plan: {plan}")
@@ -132,7 +132,7 @@ class PlanningModule:
 
         for attempt in range(self._max_retries):
             try:
-                response_text = self.llm.generate(messages, use_tools=False)
+                response_text = self.llm_service.llm.generate(messages, use_tools=False)
                 logger.info(f"LLM Raw Response (fallback): {response_text}")
                 plan = forgiving_json_extract(response_text)
                 logger.info(f"Extracted Plan (fallback): {plan}")

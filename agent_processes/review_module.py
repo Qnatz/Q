@@ -1,7 +1,7 @@
 import os
-from datetime import datetime
 from typing import List
 import logging
+from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager # Import PromptManager
 from tools.base_tool_classes import ToolExecutionStatus
 
@@ -15,11 +15,11 @@ class ReviewModule:
       - Writes project_state/code_review_report.md
     """
 
-    def __init__(self, llm=None, prompt_manager: PromptManager = None, tool_registry=None): # Accept prompt_manager and tool_registry
-        self.llm = llm
-        self.prompt_manager = prompt_manager # Store prompt_manager
-        self.tool_registry = tool_registry # Store tool_registry
-        self.system_prompt_name = "orchestrator/review" # Name of the prompt in memory
+    def __init__(self, llm_service: LLMService = None, prompt_manager: PromptManager = None, tool_registry=None):
+        self.llm_service = llm_service
+        self.prompt_manager = prompt_manager
+        self.tool_registry = tool_registry
+        self.system_prompt_name = "orchestrator/review"
 
     def _ensure_dir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
@@ -54,7 +54,7 @@ Code begins below:
 """
         try:
             # If your UnifiedLLM exposes .generate(messages) use that API; otherwise adapt as needed.
-            return self.llm.generate([{"role": "system", "content": system_prompt_content}, {"role": "user", "content": prompt}]) if self.llm else ""
+            return self.llm_service.llm.generate([{"role": "system", "content": system_prompt_content}, {"role": "user", "content": prompt}]) if self.llm_service else ""
         except Exception:
             return ""
 

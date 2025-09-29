@@ -1,14 +1,9 @@
 # programming_module.py
-import json
 from typing import List, Dict, Any, Optional, Generator
 from dataclasses import dataclass
 import logging
-import os
 
-from qllm.unified_llm import UnifiedLLM
-from schemas.implementation_schema import IMPLEMENTATION_SCHEMA
-from utils.json_utils import safe_json_extract
-from utils.validation_utils import validate
+from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager
 from tools.tool_registry import ToolRegistry, ToolExecutionStatus
 
@@ -22,8 +17,8 @@ class ImplementationResult:
     warnings: List[str]
 
 class ProgrammingModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager, tool_registry: ToolRegistry):
-        self.llm = llm
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager, tool_registry: ToolRegistry):
+        self.llm_service = llm_service
         self.prompt_manager = prompt_manager
         self.tool_registry = tool_registry
 

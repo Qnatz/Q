@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from qllm.unified_llm import UnifiedLLM
+from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager
 import logging
 
@@ -22,13 +22,12 @@ class IdeationResult:
     message: str
     project_title: Optional[str] = None
     refined_prompt: Optional[str] = None
-    confirmation_message: Optional[str] = None
 
-import random
+
 
 class IdeationModule:
-    def __init__(self, llm: UnifiedLLM, prompt_manager: PromptManager):
-        self.llm = llm
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+        self.llm_service = llm_service
         self.prompt_manager = prompt_manager
         self.logger = logging.getLogger(__name__)
         self._max_retries = 3
@@ -63,6 +62,10 @@ class IdeationModule:
 
     def _validate_ideation_response(self, response: str) -> Tuple[bool, Optional[Dict]]:
         """Validate and parse LLM response"""
+        # Preliminary check: if it doesn't look like JSON, it's likely a conversational turn
+        if not response.strip().startswith('{') or not response.strip().endswith('}'):
+            return False, None
+
         try:
             # The response should be a JSON object, and nothing else.
             parsed = json.loads(response)
@@ -83,7 +86,7 @@ class IdeationModule:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_query}
         ]
-        initial_response = self.llm.generate(messages, use_tools=False)
+        initial_response = self.llm_service.llm.generate(messages, use_tools=False)
 
         # Store the initial user query in history
         # This will be used in continue_ideation_session
@@ -99,10 +102,52 @@ class IdeationModule:
 
         for attempt in range(self._max_retries):
             try:
-                system_prompt = self._get_ideation_prompt()
-                messages = [{"role": "system", "content": system_prompt}] + history
-                
-                response_text = self.llm.generate(messages, use_tools=False)
+                # Extract the last user message to check for build signal
+                last_user_message = history[-1]["content"].lower() if history and history[-1]["role"] == "user" else ""
+
+                # Check for explicit build signal
+                if any(keyword in last_user_message for keyword in ["build", "create", "start project", "go ahead"]):
+                    self.logger.info("Explicit build signal detected. Forcing ideation completion.")
+                    # Attempt to synthesize refined_prompt and project_title from history
+                    # This is a simplified synthesis. A more advanced version might use an LLM call here.
+                    synthesized_project_title = "Software Project"
+                    synthesized_refined_prompt = "A software project based on the conversation history."
+
+                    # Try to extract from previous LLM responses if available
+                    for msg in reversed(history):
+                        if msg["role"] == "assistant" and msg["content"].strip().startswith('{') and msg["content"].strip().endswith('}'):
+                            try:
+                                parsed_llm_response = json.loads(msg["content"])
+                                if parsed_llm_response.get("project_title"):
+                                    synthesized_project_title = parsed_llm_response["project_title"]
+                                if parsed_llm_response.get("refined_prompt"):
+                                    synthesized_refined_prompt = parsed_llm_response["refined_prompt"]
+                                break
+                            except json.JSONDecodeError:
+                                pass
+                        elif msg["role"] == "assistant":
+                            # Simple heuristic: last assistant message before build signal is likely the refined prompt
+                            synthesized_refined_prompt = msg["content"]
+                            break
+
+                    # If no project title was explicitly set by the LLM, use a generic one
+                    if synthesized_project_title == "Software Project" and len(history) > 1:
+                        # Attempt to derive a project title from the initial user query
+                        initial_query = history[0]["content"]
+                        synthesized_project_title = " ".join(initial_query.split()[:5]).replace(" ", "_") or "Software Project"
+
+                    return {
+                        "type": "ideation_complete",
+                        "project_title": synthesized_project_title,
+                        "refined_prompt": synthesized_refined_prompt,
+                        "confirmation_message": "Great! I have enough information to start building this project."
+                    }
+
+                else:
+                    system_prompt = self._get_ideation_prompt()
+                    messages = [{"role": "system", "content": system_prompt}] + history
+                    
+                    response_text = self.llm_service.llm.generate(messages, use_tools=False)
                 
                 # Check for completion
                 is_valid, parsed_response = self._validate_ideation_response(response_text.strip())

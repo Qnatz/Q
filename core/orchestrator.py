@@ -4,6 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 import sys
 from datetime import datetime
+from typing import Optional
 
 from rich.console import Console
 from rich.live import Live
@@ -19,6 +20,7 @@ from core.ui import say_assistant, say_error, say_system, say_user
 from core.workflow_manager import WorkflowManager
 from memory.prompt_manager import PromptManager
 from core.ide_server import IDEServer
+from schemas.project_schema import ProjectMetadata
 console = Console()
 
 
@@ -28,7 +30,7 @@ class OrchestratorAgent:
         self.agent_manager = AgentManager()
         self.prompt_manager = PromptManager() # Corrected initialization
         self.llm_service = LLMService(self.agent_manager.unified_llm, self.prompt_manager)
-        self.context_builder = ContextBuilder(self.llm_service)
+        self.context_builder = ContextBuilder(self.llm_service, self.state_manager.unified_memory)
         self.router = Router(self.agent_manager.unified_llm, self.agent_manager.prompt_manager) # Corrected initialization
         self.workflow_manager = WorkflowManager(
             self.agent_manager.planner,
@@ -53,6 +55,29 @@ class OrchestratorAgent:
         self.ide_server = IDEServer()
         self.ide_server.run_in_thread()
 
+    def _display_and_select_project(self, user_id: str) -> Optional[str]:
+        projects = self.state_manager.unified_memory.get_all_project_metadata(user_id)
+        if not projects:
+            say_system("No existing projects found. Let's start a new one!")
+            return None
+
+        say_system("Existing Projects:")
+        for i, project in enumerate(projects):
+            say_system(f"{i + 1}. {project.project_name} (Status: {project.status}, Completion: {project.completion_rate:.0%})")
+
+        while True:
+            choice = console.input("[bold blue]💭 Enter the number of the project to resume, or type 'new' to start a new project: [/bold blue]").strip()
+            if choice.lower() == 'new':
+                return None
+            try:
+                index = int(choice) - 1
+                if 0 <= index < len(projects):
+                    return projects[index].project_id
+                else:
+                    say_error("Invalid project number. Please try again.")
+            except ValueError:
+                say_error("Invalid input. Please enter a number or 'new'.")
+
     def process_query(self, user_query: str, user_id: str) -> dict:
         """Process user query with proper state handling"""
         try:
@@ -68,10 +93,14 @@ class OrchestratorAgent:
 
             state.turn += 1
 
-            # Route the query or continue ideation
+            # Route the query or continue ideation/resumed workflow
             if state.is_in_ideation_session:
                 route = "ideation"
                 message = user_query # Pass the user query directly to the ideation handler
+            elif state.current_project_id and state.current_phase != "conversation":
+                # If a project is resumed, route based on its current phase
+                route = state.current_phase
+                message = user_query # Pass the user query, might be a command to continue
             else:
                 route, message = self.router.get_route(user_query, state)
             response_dict = {"type": route, "message": message}
@@ -112,9 +141,43 @@ class OrchestratorAgent:
     def run(self):
         """Main execution loop"""
 
-
-
         user_id = "default_user"
+
+        # Display existing projects and allow selection
+        selected_project_id = self._display_and_select_project(user_id)
+
+        if selected_project_id:
+            say_system(f"Resuming project: {selected_project_id}")
+            # Load the project state and set it as current
+            project_metadata = self.state_manager.unified_memory.get_project_metadata(selected_project_id)
+            if project_metadata:
+                # Reconstruct conversation state from project metadata
+                state = self.state_manager.get_conversation_state(user_id)
+                state.history = project_metadata.conversation_history
+                state.current_project_id = project_metadata.project_id
+                state.pending_build_confirmation = {
+                    "type": "build",
+                    "refined_prompt": project_metadata.refined_prompt,
+                    "project_title": project_metadata.project_name,
+                    "project_id": project_metadata.project_id
+                }
+                # Set the current phase based on project status for resumption
+                if project_metadata.status == "ideation_complete":
+                    state.current_phase = "planning"
+                elif project_metadata.status == "planning_complete":
+                    state.current_phase = "programming"
+                elif project_metadata.status == "programming":
+                    state.current_phase = "qa"
+                elif project_metadata.status == "qa":
+                    state.current_phase = "review"
+                elif project_metadata.status == "review":
+                    state.current_phase = "completed"
+                
+                self.state_manager._update_conversation_state(user_id, state)
+                say_system(f"Project {project_metadata.project_name} loaded. Current status: {project_metadata.status}")
+            else:
+                say_error(f"Failed to load project {selected_project_id}. Starting new session.")
+                selected_project_id = None
 
         while True:
             try:
@@ -125,6 +188,11 @@ class OrchestratorAgent:
                         "👋 Thanks for brainstorming! Come back anytime with new ideas."
                     )
                     break
+
+                if user_input.lower() == "clear history":
+                    self.state_manager.clear_conversation_history(user_id)
+                    say_system("Conversation history cleared.")
+                    continue
 
                 if not user_input:
                     continue

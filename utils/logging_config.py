@@ -13,4 +13,4 @@ def setup_logging():
     )
     logging.getLogger("httpx").setLevel(logging.ERROR)
     logging.getLogger("memory.prompt_manager").setLevel(logging.ERROR)
-    logging.getLogger("qllm.backends").setLevel(logging.ERROR)
+    logging.getLogger("qllm.backends").setLevel(logging.DEBUG)

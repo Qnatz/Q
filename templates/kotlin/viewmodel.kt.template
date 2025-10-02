@@ -1,0 +1,266 @@
+package {{package_name}}.presentation.{{entity_name.lower()}}
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import timber.log.Timber
+import javax.inject.Inject
+import {{package_name}}.domain.model.{{entity_name}}
+import {{package_name}}.domain.repository.{{entity_name}}Repository
+import {{package_name}}.domain.usecase.*
+import {{package_name}}.util.Resource
+import {{package_name}}.util.UiEvent
+
+/**
+ * ViewModel for {{entity_name}} screen following MVVM architecture
+ * 
+ * Responsibilities:
+ * - Manage UI state and expose it via StateFlow
+ * - Handle business logic through use cases
+ * - Coordinate user actions and system events
+ * - Survive configuration changes
+ * 
+ * @property get{{entity_name}}sUseCase Use case for fetching {{entity_name.lower()}}s
+ * @property create{{entity_name}}UseCase Use case for creating new {{entity_name.lower()}}
+ * @property update{{entity_name}}UseCase Use case for updating existing {{entity_name.lower()}}
+ * @property delete{{entity_name}}UseCase Use case for deleting {{entity_name.lower()}}
+ */
+@HiltViewModel
+class {{entity_name}}ViewModel @Inject constructor(
+    private val get{{entity_name}}sUseCase: Get{{entity_name}}sUseCase,
+    private val create{{entity_name}}UseCase: Create{{entity_name}}UseCase,
+    private val update{{entity_name}}UseCase: Update{{entity_name}}UseCase,
+    private val delete{{entity_name}}UseCase: Delete{{entity_name}}UseCase
+) : ViewModel() {
+
+    // UI State - Single source of truth
+    private val _uiState = MutableStateFlow({{entity_name}}UiState())
+    val uiState: StateFlow<{{entity_name}}UiState> = _uiState.asStateFlow()
+
+    // UI Events - One-time events (navigation, snackbar, etc.)
+    private val _uiEvent = MutableSharedFlow<UiEvent>()
+    val uiEvent: SharedFlow<UiEvent> = _uiEvent.asSharedFlow()
+
+    // Search query for filtering
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    init {
+        load{{entity_name}}s()
+        observeSearchQuery()
+    }
+
+    /**
+     * Load all {{entity_name.lower()}}s from repository
+     * Handles loading states and errors gracefully
+     */
+    fun load{{entity_name}}s() {
+        viewModelScope.launch {
+            get{{entity_name}}sUseCase()
+                .onStart {
+                    _uiState.update { it.copy(isLoading = true, error = null) }
+                }
+                .catch { exception ->
+                    Timber.e(exception, "Error loading {{entity_name.lower()}}s")
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = exception.message ?: "Unknown error occurred"
+                        )
+                    }
+                    _uiEvent.emit(UiEvent.ShowSnackbar("Failed to load {{entity_name.lower()}}s"))
+                }
+                .collect { resource ->
+                    when (resource) {
+                        is Resource.Success -> {
+                            _uiState.update {
+                                it.copy(
+                                    {{entity_name.lower()}}s = resource.data ?: emptyList(),
+                                    isLoading = false,
+                                    error = null
+                                )
+                            }
+                        }
+                        is Resource.Error -> {
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    error = resource.message
+                                )
+                            }
+                            _uiEvent.emit(
+                                UiEvent.ShowSnackbar(resource.message ?: "Error loading data")
+                            )
+                        }
+                        is Resource.Loading -> {
+                            _uiState.update { it.copy(isLoading = true) }
+                        }
+                    }
+                }
+        }
+    }
+
+    /**
+     * Handle user actions from the UI
+     */
+    fun onAction(action: {{entity_name}}Action) {
+        when (action) {
+            is {{entity_name}}Action.Create -> create{{entity_name}}(action.{{entity_name.lower()}})
+            is {{entity_name}}Action.Update -> update{{entity_name}}(action.{{entity_name.lower()}})
+            is {{entity_name}}Action.Delete -> delete{{entity_name}}(action.id)
+            is {{entity_name}}Action.Search -> updateSearchQuery(action.query)
+            is {{entity_name}}Action.Refresh -> load{{entity_name}}s()
+            is {{entity_name}}Action.ClearError -> clearError()
+            is {{entity_name}}Action.Select -> select{{entity_name}}(action.{{entity_name.lower()}})
+        }
+    }
+
+    private fun create{{entity_name}}({{entity_name.lower()}}: {{entity_name}}) {
+        viewModelScope.launch {
+            try {
+                create{{entity_name}}UseCase({{entity_name.lower()}})
+                    .catch { exception ->
+                        Timber.e(exception, "Error creating {{entity_name.lower()}}")
+                        _uiEvent.emit(UiEvent.ShowSnackbar("Failed to create {{entity_name.lower()}}"))
+                    }
+                    .collect { resource ->
+                        when (resource) {
+                            is Resource.Success -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar("{{entity_name}} created successfully"))
+                                load{{entity_name}}s()
+                            }
+                            is Resource.Error -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar(resource.message ?: "Error"))
+                            }
+                            is Resource.Loading -> {
+                                // Handle loading state if needed
+                            }
+                        }
+                    }
+            } catch (e: Exception) {
+                Timber.e(e, "Unexpected error creating {{entity_name.lower()}}")
+                _uiEvent.emit(UiEvent.ShowSnackbar("Unexpected error occurred"))
+            }
+        }
+    }
+
+    private fun update{{entity_name}}({{entity_name.lower()}}: {{entity_name}}) {
+        viewModelScope.launch {
+            try {
+                update{{entity_name}}UseCase({{entity_name.lower()}})
+                    .catch { exception ->
+                        Timber.e(exception, "Error updating {{entity_name.lower()}}")
+                        _uiEvent.emit(UiEvent.ShowSnackbar("Failed to update {{entity_name.lower()}}"))
+                    }
+                    .collect { resource ->
+                        when (resource) {
+                            is Resource.Success -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar("{{entity_name}} updated successfully"))
+                                load{{entity_name}}s()
+                            }
+                            is Resource.Error -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar(resource.message ?: "Error"))
+                            }
+                            is Resource.Loading -> {}
+                        }
+                    }
+            } catch (e: Exception) {
+                Timber.e(e, "Unexpected error updating {{entity_name.lower()}}")
+                _uiEvent.emit(UiEvent.ShowSnackbar("Unexpected error occurred"))
+            }
+        }
+    }
+
+    private fun delete{{entity_name}}(id: String) {
+        viewModelScope.launch {
+            try {
+                delete{{entity_name}}UseCase(id)
+                    .catch { exception ->
+                        Timber.e(exception, "Error deleting {{entity_name.lower()}}")
+                        _uiEvent.emit(UiEvent.ShowSnackbar("Failed to delete {{entity_name.lower()}}"))
+                    }
+                    .collect { resource ->
+                        when (resource) {
+                            is Resource.Success -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar("{{entity_name}} deleted successfully"))
+                                load{{entity_name}}s()
+                            }
+                            is Resource.Error -> {
+                                _uiEvent.emit(UiEvent.ShowSnackbar(resource.message ?: "Error"))
+                            }
+                            is Resource.Loading -> {}
+                        }
+                    }
+            } catch (e: Exception) {
+                Timber.e(e, "Unexpected error deleting {{entity_name.lower()}}")
+                _uiEvent.emit(UiEvent.ShowSnackbar("Unexpected error occurred"))
+            }
+        }
+    }
+
+    private fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
+    private fun observeSearchQuery() {
+        viewModelScope.launch {
+            searchQuery
+                .debounce(300L) // Wait 300ms after user stops typing
+                .distinctUntilChanged()
+                .collect { query ->
+                    // Filter {{entity_name.lower()}}s based on search query
+                    if (query.isBlank()) {
+                        load{{entity_name}}s()
+                    } else {
+                        filter{{entity_name}}s(query)
+                    }
+                }
+        }
+    }
+
+    private fun filter{{entity_name}}s(query: String) {
+        viewModelScope.launch {
+            val filtered = _uiState.value.{{entity_name.lower()}}s.filter {
+                it.name.contains(query, ignoreCase = true) ||
+                it.description?.contains(query, ignoreCase = true) == true
+            }
+            _uiState.update { it.copy({{entity_name.lower()}}s = filtered) }
+        }
+    }
+
+    private fun clearError() {
+        _uiState.update { it.copy(error = null) }
+    }
+
+    private fun select{{entity_name}}({{entity_name.lower()}}: {{entity_name}}) {
+        _uiState.update { it.copy(selected{{entity_name}} = {{entity_name.lower()}}) }
+    }
+}
+
+/**
+ * UI State for {{entity_name}} screen
+ * Represents all possible states the UI can be in
+ */
+data class {{entity_name}}UiState(
+    val {{entity_name.lower()}}s: List<{{entity_name}}> = emptyList(),
+    val selected{{entity_name}}: {{entity_name}}? = null,
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val isRefreshing: Boolean = false
+)
+
+/**
+ * User actions that can be performed on {{entity_name}} screen
+ * Represents all possible user interactions
+ */
+sealed class {{entity_name}}Action {
+    data class Create(val {{entity_name.lower()}}: {{entity_name}}) : {{entity_name}}Action()
+    data class Update(val {{entity_name.lower()}}: {{entity_name}}) : {{entity_name}}Action()
+    data class Delete(val id: String) : {{entity_name}}Action()
+    data class Select(val {{entity_name.lower()}}: {{entity_name}}) : {{entity_name}}Action()
+    data class Search(val query: String) : {{entity_name}}Action()
+    object Refresh : {{entity_name}}Action()
+    object ClearError : {{entity_name}}Action()
+}

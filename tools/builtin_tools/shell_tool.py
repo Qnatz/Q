@@ -276,6 +276,7 @@ class ShellTool(BaseTool):
                     stdout=subprocess.PIPE if capture_output else None,
                     stderr=subprocess.PIPE if capture_output else None,
                     text=True,
+                    shell=True, # Add this line
                     preexec_fn=os.setsid if os.name != 'nt' else None  # Create process group on Unix
                 )
                 

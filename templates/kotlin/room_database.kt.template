@@ -1,0 +1,117 @@
+package {{package_name}}.data.local
+
+import androidx.room.*
+import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import timber.log.Timber
+import {{package_name}}.data.local.dao.*
+import {{package_name}}.data.local.entity.*
+
+/**
+ * Room Database instance
+ * 
+ * Responsibilities:
+ * - Define database configuration
+ * - Manage database versions and migrations
+ * - Provide DAO instances
+ * - Handle database creation callbacks
+ * 
+ * Singleton pattern ensures single database instance
+ * 
+ * @property entities List of all entities in the database
+ * @property version Current database version (increment for schema changes)
+ * @property exportSchema Whether to export schema for version control
+ */
+@Database(
+    entities = [{% for entity in entities %}{{entity}}Entity::class{% if not loop.last %}, {% endif %}{% endfor %}],
+    version = 1,
+    exportSchema = true
+)
+@TypeConverters({% for entity in entities %}{{entity}}Converters::class{% if not loop.last %}, {% endif %}{% endfor %})
+abstract class AppDatabase : RoomDatabase() {
+
+    // DAO declarations
+    {% for entity in entities %}abstract fun {{entity.lower()}}Dao(): {{entity}}Dao
+    {% endfor %}
+
+    companion object {
+        const val DATABASE_NAME = "app_database"
+    }
+}
+
+/**
+ * Database callback for initialization
+ * Runs on database creation or opening
+ */
+class DatabaseCallback(
+    private val scope: CoroutineScope
+) : RoomDatabase.Callback() {
+
+    override fun onCreate(db: SupportSQLiteDatabase) {
+        super.onCreate(db)
+        Timber.d("Database created")
+        
+        // Prepopulate database with initial data if needed
+        scope.launch(Dispatchers.IO) {
+            prepopulateDatabase()
+        }
+    }
+
+    override fun onOpen(db: SupportSQLiteDatabase) {
+        super.onOpen(db)
+        Timber.d("Database opened")
+    }
+
+    private suspend fun prepopulateDatabase() {
+        // Add initial data here if needed
+        Timber.d("Database prepopulation completed")
+    }
+}
+
+/**
+ * Database migrations
+ * Define migration strategies for schema changes
+ */
+object DatabaseMigrations {
+
+    /**
+     * Migration from version 1 to 2
+     * Example: Add new column
+     */
+    val MIGRATION_1_2 = object : Migration(1, 2) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Example: Add a new column
+            // database.execSQL("ALTER TABLE {{entities[0].lower()}}s ADD COLUMN newColumn TEXT")
+            Timber.d("Migration 1 -> 2 completed")
+        }
+    }
+
+    /**
+     * Migration from version 2 to 3
+     * Example: Create new table
+     */
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Example: Create a new table
+            // database.execSQL("""
+            //     CREATE TABLE IF NOT EXISTS new_table (
+            //         id TEXT PRIMARY KEY NOT NULL,
+            //         name TEXT NOT NULL
+            //     )
+            // """)
+            Timber.d("Migration 2 -> 3 completed")
+        }
+    }
+
+    /**
+     * Get all migrations
+     */
+    fun getAllMigrations(): Array<Migration> {
+        return arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3
+        )
+    }
+}

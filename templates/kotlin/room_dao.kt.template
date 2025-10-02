@@ -1,0 +1,138 @@
+package {{package_name}}.data.local.dao
+
+import androidx.room.*
+import kotlinx.coroutines.flow.Flow
+import {{package_name}}.data.local.entity.{{entity_name}}Entity
+
+/**
+ * Data Access Object for {{entity_name}}Entity
+ * 
+ * Provides type-safe database operations with:
+ * - Reactive queries using Flow
+ * - Suspend functions for async operations
+ * - Compile-time SQL validation
+ * - Automatic type conversion
+ * 
+ * Best Practices:
+ * - Return Flow for observable queries (auto-updates UI)
+ * - Use suspend for single-shot operations
+ * - Leverage @Transaction for complex operations
+ * - Use @Query for custom queries with type-safe parameters
+ */
+@Dao
+interface {{entity_name}}Dao {
+
+    /**
+     * Get all {{entity_name.lower()}}s ordered by creation date (newest first)
+     * Returns Flow for automatic UI updates when data changes
+     */
+    @Query("SELECT * FROM {{entity_name.lower()}}s ORDER BY createdAt DESC")
+    fun getAll{{entity_name}}s(): Flow<List<{{entity_name}}Entity>>
+
+    /**
+     * Get a single {{entity_name.lower()}} by ID
+     * Returns nullable for handling not found cases
+     */
+    @Query("SELECT * FROM {{entity_name.lower()}}s WHERE id = :id")
+    suspend fun get{{entity_name}}ById(id: String): {{entity_name}}Entity?
+
+    /**
+     * Search {{entity_name.lower()}}s by name (case-insensitive)
+     * Uses LIKE operator with wildcards for partial matching
+     */
+    @Query("""
+        SELECT * FROM {{entity_name.lower()}}s 
+        WHERE name LIKE '%' || :query || '%' 
+        OR description LIKE '%' || :query || '%'
+        ORDER BY createdAt DESC
+    """)
+    fun search{{entity_name}}s(query: String): Flow<List<{{entity_name}}Entity>>
+
+    /**
+     * Get {{entity_name.lower()}}s created after a specific date
+     * Useful for syncing incremental updates
+     */
+    @Query("SELECT * FROM {{entity_name.lower()}}s WHERE createdAt > :timestamp ORDER BY createdAt DESC")
+    fun get{{entity_name}}sAfter(timestamp: Long): Flow<List<{{entity_name}}Entity>>
+
+    /**
+     * Get {{entity_name.lower()}}s with pending sync (offline changes)
+     */
+    @Query("SELECT * FROM {{entity_name.lower()}}s WHERE pendingSync = 1")
+    suspend fun getPending{{entity_name}}s(): List<{{entity_name}}Entity>
+
+    /**
+     * Insert a single {{entity_name.lower()}}
+     * OnConflictStrategy.REPLACE updates existing entry if conflict occurs
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert{{entity_name}}({{entity_name.lower()}}: {{entity_name}}Entity): Long
+
+    /**
+     * Insert multiple {{entity_name.lower()}}s
+     * Returns list of row IDs for inserted items
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll{{entity_name}}s({{entity_name.lower()}}s: List<{{entity_name}}Entity>): List<Long>
+
+    /**
+     * Update an existing {{entity_name.lower()}}
+     * Returns number of rows updated (0 if not found, 1 if updated)
+     */
+    @Update
+    suspend fun update{{entity_name}}({{entity_name.lower()}}: {{entity_name}}Entity): Int
+
+    /**
+     * Delete a single {{entity_name.lower()}}
+     */
+    @Delete
+    suspend fun delete{{entity_name}}({{entity_name.lower()}}: {{entity_name}}Entity): Int
+
+    /**
+     * Delete {{entity_name.lower()}} by ID
+     */
+    @Query("DELETE FROM {{entity_name.lower()}}s WHERE id = :id")
+    suspend fun delete{{entity_name}}ById(id: String): Int
+
+    /**
+     * Delete all {{entity_name.lower()}}s
+     * Use with caution - typically for cache clearing
+     */
+    @Query("DELETE FROM {{entity_name.lower()}}s")
+    suspend fun deleteAll{{entity_name}}s(): Int
+
+    /**
+     * Mark {{entity_name.lower()}} for deletion (soft delete for offline support)
+     */
+    @Query("UPDATE {{entity_name.lower()}}s SET markedForDeletion = 1, pendingSync = 1 WHERE id = :id")
+    suspend fun mark{{entity_name}}ForDeletion(id: String): Int
+
+    /**
+     * Get count of all {{entity_name.lower()}}s
+     */
+    @Query("SELECT COUNT(*) FROM {{entity_name.lower()}}s")
+    suspend fun get{{entity_name}}Count(): Int
+
+    /**
+     * Check if {{entity_name.lower()}} exists by ID
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM {{entity_name.lower()}}s WHERE id = :id)")
+    suspend fun {{entity_name.lower()}}Exists(id: String): Boolean
+
+    /**
+     * Transaction example: Delete old and insert new {{entity_name.lower()}}s atomically
+     * Ensures data consistency - all or nothing
+     */
+    @Transaction
+    suspend fun refreshAll{{entity_name}}s({{entity_name.lower()}}s: List<{{entity_name}}Entity>) {
+        deleteAll{{entity_name}}s()
+        insertAll{{entity_name}}s({{entity_name.lower()}}s)
+    }
+
+    /**
+     * Get {{entity_name.lower()}}s with pagination
+     * Useful for large datasets to load incrementally
+     */
+    @Query("SELECT * FROM {{entity_name.lower()}}s ORDER BY createdAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun get{{entity_name}}sPaginated(limit: Int, offset: Int): List<{{entity_name}}Entity>>
+}

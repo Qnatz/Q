@@ -16,8 +16,10 @@ from tools.builtin_tools.file_operation_tool import FileOperationTool
 from tools.builtin_tools.code_analysis_tool import CodeAnalysisTool
 from tools.builtin_tools.system_info_tool import SystemInfoTool
 from tools.builtin_tools.robust_replace_tool import RobustReplaceTool
-from tools.builtin_tools.stepwise_tools import (StepwisePlannerTool, StepwiseImplementationTool, 
-                                               StepwiseQATool, StepwiseReviewTool)
+from tools.builtin_tools.stepwise_planner_tool import StepwisePlannerTool
+from tools.builtin_tools.stepwise_implementation_tool import StepwiseImplementationTool
+from tools.builtin_tools.stepwise_qa_tool import StepwiseQATool
+from tools.builtin_tools.stepwise_review_tool import StepwiseReviewTool
 from tools.builtin_tools.git_tool import GitTool
 from tools.builtin_tools.shell_tool import ShellTool
 
@@ -50,7 +52,7 @@ class ToolRegistry:
             GitTool(),
             ShellTool(),
             StepwisePlannerTool(llm=self.llm),
-            StepwiseImplementationTool(llm=self.llm),
+            StepwiseImplementationTool(llm=self.llm, tool_registry=self),
             StepwiseQATool(llm=self.llm),
             StepwiseReviewTool(llm=self.llm)
         ]

@@ -7,7 +7,16 @@ You have already gathered comprehensive context from the repository through the 
 </context>
 
 <task>
-Generate an execution plan to address the user's request. Your plan will guide the implementation phase, so each action must be specific, actionable and detailed.
+Generate an execution plan to address the user's request.
+
+<project_details>
+Project Title: {PROJECT_TITLE}
+Refined Prompt: {REFINED_PROMPT}
+</project_details>
+
+Your first step is to redefine the project title. It should be a creative, catchy name that reflects the project's purpose, and it must include a timestamp. For example: "CodeCompanion-20251001T074500".
+
+Your plan will guide the implementation phase, so each action must be specific, actionable and detailed.
 It should contain enough information to not require many additional context gathering steps to execute.
 
 <user_request>
@@ -16,55 +25,71 @@ It should contain enough information to not require many additional context gath
 </task>
 
 <instructions>
-Create your plan following these guidelines:
+### Core Requirements:
+1. Output must strictly follow the provided PLAN_SCHEMA.
+2. PLAN MUST CONTAIN THESE 3 PARTS
+   - **project** → a creative name with a timestamp, and a description (use the `REFINED_PROMPT` or `USER_REQUEST_PROMPT` for the description)
+   - **files** → list of key files or folders to be created or modified
+   - **tasks** → a detailed, step-by-step roadmap
 
-1. **Structure each action item to include:**
-   - The specific task to accomplish
-   - Key technical details needed for execution
-   - File paths, function names, or other concrete references from the context you've gathered.
-   - If you're mentioning a file, or code within a file that already exists, you are required to include the file path in the plan item.
-    - This is incredibly important as we do not want to force the programmer to search for this information again, if you've already found it.
+### Task Requirements:
+- **Granularity**
+  - Break the project into **at least 6–10 actionable tasks**.
+  - Avoid vague single-task “implement everything” plans.
 
-2. **Write actionable items that:**
-   - Focus on implementation steps, not information gathering
-   - Can be executed independently without additional context discovery
-   - Build upon each other in logical sequence
-   - Are not open ended, and require additional context to execute
+- **Modules**
+  - Assign each task to one of:
+    - `ProgrammingModule` (coding, database, API, frontend)
+    - `QAModule` (unit tests, integration tests)
+    - `ReviewModule` (code review, security, performance)
+    - `ManagementModule` (deployment plan, risk assessment)
 
-3. **Optimize for efficiency by:**
-   - Completing the request in the minimum number of steps. This is absolutely vital to the success of the plan. You should generate as few plan items as possible.
-   - Reusing existing code and patterns wherever possible
-   - Writing reusable components when code will be used multiple times
 
-4. **Include only what's requested:**
-   - Add testing steps only if the user explicitly requested tests
-   - Add documentation steps only if the user explicitly requested documentation
-   - Focus solely on fulfilling the stated requirements
+- **Outputs**
+  - Every task must specify a **concrete output file or artifact** 
+    (e.g., `backend/app.py`, `tests/unit/`, `deployment_plan.md`).
 
-5. **Follow the custom rules:**
-   - Carefully read, and follow any instructions provided in the 'custom_rules' section. E.g. if the rules state you must run a linter or formatter, etc., include a plan item to do so.
+- **Files**
+  - The "files" array must include all relevant files to be created or modified.
+  - At minimum, include one valid file path.
 
-6. **Combine simple, related steps:**
-   - If you have multiple simple steps that are related, and should be executed one after the other, combine them into a single step.
-   - For example, if you have multiple steps to run a linter, formatter, etc., combine them into a single step. The same goes for passing arguments, or editing files.
+- **Consistency**
+  - Ensure tasks, files, and outputs align.
+  - Avoid placeholders like “app files” — use specific filenames or folders.
+
+- **Efficiency**
+  - Complete the request in the minimum number of steps.
+  - Reuse existing code and patterns wherever possible.
+  - Combine simple related steps into single tasks.
+
+- **Scope Discipline**
+  - Add tests only if explicitly requested.
+  - Add documentation only if explicitly requested.
+  - Do not go beyond what is required.
+
+### Mandatory completeness
+- Each "tasks" entry must clearly describe its execution, name the responsible module, and specify an expected output.
+- No generic or high-level summaries. Every step must be executable without further context discovery.
 
 {GITHUB_WORKFLOWS_PERMISSIONS_PROMPT}
 
 </instructions>
 
 <output_format>
-Your output MUST be a JSON object that strictly adheres to the following schema. Do NOT include any other text or markdown outside the JSON object. This is CRITICAL for the system to function correctly.
+Your output MUST be a JSON object that strictly adheres to the following schema. 
+Do NOT include any other text or markdown outside the JSON object. 
+This is CRITICAL for the system to function correctly.
+
 {PLAN_SCHEMA}
 
-- **project**: An object containing the project's `name` and `description`.
-- **files**: An array of objects, each describing a file to be created or modified, including its `path` and `purpose`.
-- **tasks**: An array of objects, each representing a specific task in the execution plan. Each task must have a `task` description, a more detailed `description`, the `module` responsible for it, and the `output` expected.
-
-Ensure the JSON is valid and complete. Do NOT include any other text or markdown outside the JSON object.
+⚠️ IMPORTANT:
+- Do not return placeholder objects.
+- Each "files" entry must be concrete (valid file path and purpose).
+- Each "tasks" entry must describe an actual step (not a high-level summary).
 </output_format>
 
 {SCRATCHPAD}
 
 Remember: Your goal is to create a focused, executable plan that efficiently accomplishes the user's request using the context you've already gathered.
 
-Your sole output MUST be a JSON object. Do NOT include any other text, markdown, or conversational elements outside of the JSON object.
+Your final output MUST be the JSON plan, and nothing else.

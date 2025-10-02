@@ -1,26 +1,29 @@
 import json
 import re
+import logging
 from typing import Dict, Any, List, Optional
 
 from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager
 from schemas.plan_schema import PLAN_SCHEMA
 from utils.json_utils import safe_json_extract
-from utils.validation_utils import validate
-import logging
+from utils.validation_utils import validate_plan
+from core.project_context import ProjectContext  # <-- new
 
 logger = logging.getLogger(__name__)
+
+PROMPT_MAPPINGS = {
+    # Only the planning prompt is used
+    "orchestrator/plan_generation": "orchestrator_planning_phase_prompt"
+}
 
 
 def forgiving_json_extract(text: str) -> Optional[Dict[str, Any]]:
     """More forgiving JSON extractor that attempts to recover the largest JSON block."""
     try:
-        # Try the normal extractor first
         plan = safe_json_extract(text)
         if plan:
             return plan
-
-        # Fallback: regex to grab first {...} block
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             return json.loads(match.group(0))
@@ -30,138 +33,151 @@ def forgiving_json_extract(text: str) -> Optional[Dict[str, Any]]:
 
 
 class PlanningModule:
-    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+    def __init__(
+        self,
+        llm_service: LLMService,
+        prompt_manager: PromptManager,
+        project_context: ProjectContext
+    ):
         self.llm_service = llm_service
         self.prompt_manager = prompt_manager
+        self.project_context = project_context
         self._max_retries = 3
+
+    def _load_prompt(self, prompt_name: str) -> str:
+        mapped_name = PROMPT_MAPPINGS.get(prompt_name, prompt_name)
+        prompt_content = self.prompt_manager.get_prompt(mapped_name)
+        if not prompt_content:
+            logger.warning(f"Prompt {prompt_name} not found, using fallback")
+            return self._get_fallback_prompt(prompt_name)
+        return prompt_content
+
+    def _get_fallback_prompt(self, prompt_name: str) -> str:
+        logger.error(f"No specific fallback prompt for {prompt_name}. Returning generic planning prompt.")
+        return (
+            "You are an AI assistant specialized in software project planning. "
+            "Generate a detailed plan in JSON format based on the user's request."
+        )
 
     def generate_plan(
         self,
         project_title: str,
-        user_request: str,
-        conversation_history: List[Dict[str, str]],
+        refined_prompt: str,
+        conversation_history: List[Dict[str, str]]
     ) -> Dict[str, Any]:
-        """Generate a detailed plan for the user's request."""
-        logger.info(f"Generating plan for request: {user_request[:100]}...")
+        """Generate a detailed plan using project-specific context."""
+        logger.info(f"Generating plan for project {project_title} with request: {refined_prompt[:100]}...")
 
-        # Try stepwise planning first
-        stepwise_plan = self._stepwise_planning(project_title, user_request, conversation_history)
+        # Stepwise planning
+        stepwise_plan = self._stepwise_planning(project_title, refined_prompt, conversation_history)
         if stepwise_plan:
             return stepwise_plan
 
-        logger.warning("Stepwise planner failed, using LLM fallback")
         # Fallback to direct LLM planning
-        return self._llm_fallback_planning(project_title, user_request, conversation_history)
+        logger.warning("Stepwise planner failed, using LLM fallback")
+        return self._llm_fallback_planning(project_title, refined_prompt, conversation_history)
 
     def _stepwise_planning(
         self,
         project_title: str,
-        user_request: str,
-        conversation_history: List[Dict[str, str]],
+        refined_prompt: str,
+        conversation_history: List[Dict[str, str]]
     ) -> Optional[Dict[str, Any]]:
-        system_prompt = self.prompt_manager.get_prompt("orchestrator/plan_generation")
-        if not system_prompt:
-            logger.error("Orchestrator planning phase prompt not found.")
-            return None
+        system_prompt = self._load_prompt("orchestrator_planning_phase_prompt")
 
-        # Extract just the template content if it's wrapped in variable assignment
-        if system_prompt.startswith('PLAN_GENERATION_PROMPT = """'):
+        # Unwind triple quotes if present
+        if system_prompt.startswith('PLAN_GENERATION_PROMPT = ""'):
             lines = system_prompt.split('\n')
             system_prompt = '\n'.join(lines[1:-1])
 
-        formatted_system_prompt = system_prompt.format(
-            PROJECT_TITLE=project_title,
-            REFINED_PROMPT=user_request,
-            USER_REQUEST_PROMPT=user_request,
-            FOLLOWUP_MESSAGE_PROMPT="",
-            GITHUB_WORKFLOWS_PERMISSIONS_PROMPT="",
-            CUSTOM_RULES="",
-            SCRATCHPAD="",
-            PLAN_SCHEMA=json.dumps(PLAN_SCHEMA, indent=2),  # ✅ Inject schema
-        )
+        # Dump schema as readable JSON
+        schema_str = json.dumps(PLAN_SCHEMA, indent=2, ensure_ascii=False)
 
+        logger.debug("--- STEPWISE PLANNING DEBUG ---")
+        logger.debug(f"Project Title: {project_title}")
+        logger.debug(f"Refined Prompt: {refined_prompt}")
+        # logger.debug(f"System Prompt (before format):\n{system_prompt}")
+        logger.debug("--- END DEBUG ---")
+
+        try:
+            formatted_system_prompt = system_prompt.format(
+                PROJECT_TITLE=project_title,
+                REFINED_PROMPT=refined_prompt,
+                USER_REQUEST_PROMPT=refined_prompt,
+                FOLLOWUP_MESSAGE_PROMPT="",
+                GITHUB_WORKFLOWS_PERMISSIONS_PROMPT="",
+                SCRATCHPAD="",
+                PLAN_SCHEMA=schema_str,
+            )
+        except KeyError as e:
+            logger.error(f"KeyError during prompt formatting: {e}")
         messages = [
             {"role": "system", "content": formatted_system_prompt},
             *conversation_history,
-            {"role": "user", "content": user_request},
+            {"role": "user", "content": refined_prompt},
         ]
 
         for attempt in range(self._max_retries):
             try:
                 response_text = self.llm_service.llm.generate(messages, use_tools=False)
-                logger.info(f"LLM Raw Response: {response_text}")
+                logger.info(f"LLM RESPONSE:\n{response_text}")
                 plan = forgiving_json_extract(response_text)
-                logger.info(f"Extracted Plan: {plan}")
-
-                if plan:
-                    if validate(plan, PLAN_SCHEMA):
-                        return plan
-                    else:
-                        logger.warning("Plan failed schema validation but will be returned as-is")
-                        return plan
+                if plan and self.validate_plan(plan):
+                    return plan
             except Exception as e:
-                logger.error(f"Stepwise planner execution failed: {e}")
+                logger.error(f"Stepwise planner attempt {attempt+1} failed: {e}")
                 continue
         return None
 
     def _llm_fallback_planning(
         self,
         project_title: str,
-        user_request: str,
-        conversation_history: List[Dict[str, str]],
+        refined_prompt: str,
+        conversation_history: List[Dict[str, str]]
     ) -> Dict[str, Any]:
-        """Generate a plan directly using the LLM as a fallback."""
-        system_prompt = self.prompt_manager.get_prompt("orchestrator_planning_phase_prompt")
+        system_prompt = self._load_prompt("orchestrator_planning_phase_prompt")
         if not system_prompt:
-            logger.error("Orchestrator planning phase prompt not found for fallback.")
-            return self._create_minimal_plan(project_title, user_request)
+            logger.error("Fallback prompt not found.")
+            return self._create_minimal_plan(project_title, refined_prompt)
+
+        # Dump schema as readable JSON
+        schema_str = json.dumps(PLAN_SCHEMA, indent=2, ensure_ascii=False)
 
         formatted_system_prompt = system_prompt.format(
+            PROJECT_TITLE=project_title,
+            REFINED_PROMPT=refined_prompt,
             FOLLOWUP_MESSAGE_PROMPT="",
-            USER_REQUEST_PROMPT=user_request,
+            USER_REQUEST_PROMPT=refined_prompt,
             GITHUB_WORKFLOWS_PERMISSIONS_PROMPT="",
             SCRATCHPAD="",
-            PLAN_SCHEMA=json.dumps(PLAN_SCHEMA, indent=2),  # ✅ Inject schema
+            PLAN_SCHEMA=schema_str,
         )
 
         messages = [
             {"role": "system", "content": formatted_system_prompt},
             *conversation_history,
-            {"role": "user", "content": user_request},
+            {"role": "user", "content": refined_prompt},
         ]
 
         for attempt in range(self._max_retries):
             try:
                 response_text = self.llm_service.llm.generate(messages, use_tools=False)
-                logger.info(f"LLM Raw Response (fallback): {response_text}")
                 plan = forgiving_json_extract(response_text)
-                logger.info(f"Extracted Plan (fallback): {plan}")
-
-                if plan:
-                    if validate(plan, PLAN_SCHEMA):
-                        return plan
-                    else:
-                        logger.warning("Fallback plan failed validation but will be returned as-is")
-                        return plan
+                if plan and self.validate_plan(plan):
+                    return plan
             except Exception as e:
-                logger.error(f"Fallback planning failed: {e}")
+                logger.error(f"Fallback planning attempt {attempt+1} failed: {e}")
                 continue
+        return self._create_minimal_plan(project_title, refined_prompt)
 
-        logger.error("All planning attempts failed, returning minimal plan")
-        return self._create_minimal_plan(project_title, user_request)
-
-    def _create_minimal_plan(self, project_title: str, user_request: str) -> Dict[str, Any]:
-        """Create a minimal valid plan structure when all else fails."""
+    def _create_minimal_plan(self, project_title: str, refined_prompt: str) -> Dict[str, Any]:
         return {
-            "project": {
-                "name": project_title,
-                "description": user_request,
-            },
+            "project": {"name": project_title, "description": refined_prompt},
             "files": [],
             "tasks": [
                 {
                     "task": "Implement based on user request",
-                    "description": f"Implement: {user_request}",
+                    "description": f"Implement: {refined_prompt}",
                     "module": "ProgrammingModule",
                     "output": "Working implementation",
                 }
@@ -169,9 +185,8 @@ class PlanningModule:
         }
 
     def validate_plan(self, plan: Dict[str, Any]) -> bool:
-        """Validate the structure and content of the generated plan."""
         try:
-            return validate(plan, PLAN_SCHEMA)
+            return validate_plan(plan)
         except Exception as e:
             logger.warning(f"Plan validation failed: {e}")
             return False

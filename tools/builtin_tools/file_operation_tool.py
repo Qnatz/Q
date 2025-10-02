@@ -103,6 +103,7 @@ class FileOperationTool(BaseTool):
         return path.read_text(encoding=encoding)
     
     def execute(self, parameters: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> ToolResult:
+        logger.info(f"FileOperationTool received parameters: {parameters}")
         start_time = time.time()
         
         try:

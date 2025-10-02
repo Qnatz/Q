@@ -1,6 +1,7 @@
 from enum import Enum
 
 # Configuration constants
+PROMPT_DIR = "agent_prompts"
 MAX_RECENT_TURNS = 6
 MAX_SUMMARY_TOKENS = 200
 MAX_TURNS_BEFORE_BUILD = 4

@@ -52,6 +52,7 @@ class ConversationState:
 class StateManager:
     def __init__(self, unified_memory: UnifiedMemory = None):
         self._unified_memory = unified_memory or UnifiedMemory()
+        logger.debug(f"StateManager initialized with UnifiedMemory id: {id(self._unified_memory)}")
         self.conversation_states: Dict[str, ConversationState] = {}
 
     @property
@@ -72,26 +73,25 @@ class StateManager:
         current_state.append(value)
         self._unified_memory.tinydb.store_state(key, current_state)
 
-    def get_conversation_state(self, user_id: str) -> ConversationState:
+    def get_conversation_state(self, user_id: str, project_id: Optional[str] = None) -> ConversationState:
         """
-        Retrieve or initialize conversation state for a user.
-        Returns a ConversationState object that supports both attribute and dictionary access.
+        Retrieve or initialize conversation state for a user and project.
+        Returns a ConversationState object.
         """
-        if user_id not in self.conversation_states:
-            # Try to load from persistent memory
-            persisted_state_data = self._unified_memory.tinydb.get_state(f"conversation_state_{user_id}")
+        state_key = f"{user_id}_{project_id}" if project_id else user_id
+        if state_key not in self.conversation_states:
+            persisted_state_data = self._unified_memory.tinydb.get_state(f"conversation_state_{state_key}")
             if persisted_state_data:
                 try:
-                    # Ensure all fields are present, providing defaults for new ones
                     loaded_state = ConversationState(**persisted_state_data)
-                    self.conversation_states[user_id] = loaded_state
-                    logger.info(f"Loaded conversation state for user {user_id} from memory.")
+                    self.conversation_states[state_key] = loaded_state
+                    logger.info(f"Loaded conversation state for {state_key} from memory.")
                 except TypeError as e:
-                    logger.error(f"Failed to load conversation state for user {user_id}: {e}. Initializing new state.")
-                    self.conversation_states[user_id] = self._initialize_new_conversation_state(user_id)
+                    logger.error(f"Failed to load conversation state for {state_key}: {e}. Initializing new state.")
+                    self.conversation_states[state_key] = self._initialize_new_conversation_state(user_id)
             else:
-                self.conversation_states[user_id] = self._initialize_new_conversation_state(user_id)
-        return self.conversation_states[user_id]
+                self.conversation_states[state_key] = self._initialize_new_conversation_state(user_id)
+        return self.conversation_states[state_key]
 
     def _initialize_new_conversation_state(self, user_id: str) -> ConversationState:
         return ConversationState(
@@ -110,20 +110,22 @@ class StateManager:
             user_context=None
         )
 
-    def _update_conversation_state(self, user_id: str, state: ConversationState):
+    def _update_conversation_state(self, user_id: str, state: ConversationState, project_id: Optional[str] = None):
         """Update in-memory conversation state and persist to UnifiedMemory"""
-        self.conversation_states[user_id] = state
-        self._unified_memory.tinydb.store_state(f"conversation_state_{user_id}", state.to_dict())
-        logger.debug(f"Persisted conversation state for user {user_id}.")
+        state_key = f"{user_id}_{project_id}" if project_id else user_id
+        self.conversation_states[state_key] = state
+        self._unified_memory.tinydb.store_state(f"conversation_state_{state_key}", state.to_dict())
+        logger.debug(f"Persisted conversation state for {state_key}.")
 
-    def clear_conversation_history(self, user_id: str):
+    def clear_conversation_history(self, user_id: str, project_id: Optional[str] = None):
         """
-        Clears the conversation history for a given user from persistent storage.
+        Clears the conversation history for a given user and project from persistent storage.
         """
+        state_key = f"{user_id}_{project_id}" if project_id else user_id
         try:
-            self._unified_memory.tinydb.delete_state(f"conversation_state_{user_id}")
-            if user_id in self.conversation_states:
-                del self.conversation_states[user_id]
-            logger.info(f"Cleared conversation history for user {user_id}.")
+            self._unified_memory.tinydb.delete_state(f"conversation_state_{state_key}")
+            if state_key in self.conversation_states:
+                del self.conversation_states[state_key]
+            logger.info(f"Cleared conversation history for {state_key}.")
         except Exception as e:
-            logger.error(f"Failed to clear conversation history for user {user_id}: {e}")
+            logger.error(f"Failed to clear conversation history for {state_key}: {e}")

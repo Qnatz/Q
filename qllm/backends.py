@@ -6,7 +6,15 @@ import requests
 import subprocess
 import os
 import re
-from typing import Any, Dict, List, Optional
+import logging
+import os
+from typing import Any, Callable, Dict, List, Optional
+
+import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.ERROR)
 from .utils import json_dumps_safe
 from .config import Config
 from core.settings import settings

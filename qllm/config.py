@@ -10,7 +10,7 @@ class Config:
     backend: str = "gemini"
 
     # Common controls
-    temperature: float = 0.7
+    temperature: float = 0.8
     max_tokens: int = 4096
     max_tool_loops: int = 4
 

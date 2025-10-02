@@ -8,8 +8,10 @@ from .file_operation_tool import FileOperationTool
 from .code_analysis_tool import CodeAnalysisTool
 from .system_info_tool import SystemInfoTool
 # from .robust_replace_tool import RobustReplaceTool
-from .stepwise_tools import (StepwisePlannerTool, StepwiseImplementationTool, 
-                            StepwiseQATool, StepwiseReviewTool)
+from .stepwise_planner_tool import StepwisePlannerTool
+from .stepwise_implementation_tool import StepwiseImplementationTool
+from .stepwise_qa_tool import StepwiseQATool
+from .stepwise_review_tool import StepwiseReviewTool
 from .git_tool import GitTool
 from .shell_tool import ShellTool
 

@@ -1,0 +1,136 @@
+package {{package_name}}.data.remote.api
+
+import retrofit2.http.*
+import {{package_name}}.data.remote.dto.{{entity_name}}Dto
+import {{package_name}}.data.remote.dto.ApiResponse
+
+/**
+ * Retrofit API interface for {{entity_name}} endpoints
+ * 
+ * Best Practices:
+ * - Use suspend functions for coroutine support
+ * - Return Response<T> for full HTTP response access
+ * - Use @Path, @Query, @Body appropriately
+ * - Define clear endpoint paths
+ * - Use DTOs (Data Transfer Objects) for network models
+ * 
+ * Authentication is handled by interceptor
+ */
+interface {{entity_name}}Api {
+
+    /**
+     * Get all {{entity_name.lower()}}s
+     * 
+     * @param page Page number for pagination (default: 0)
+     * @param size Items per page (default: 20)
+     * @param sort Sort order (e.g., "createdAt,desc")
+     * @return List of {{entity_name.lower()}}s wrapped in ApiResponse
+     */
+    @GET("api/v1/{{entity_name.lower()}}s")
+    suspend fun get{{entity_name}}s(
+        @Query("page") page: Int = 0,
+        @Query("size") size: Int = 20,
+        @Query("sort") sort: String = "createdAt,desc"
+    ): List<{{entity_name}}Dto>
+
+    /**
+     * Get a single {{entity_name.lower()}} by ID
+     * 
+     * @param id {{entity_name}} unique identifier
+     * @return {{entity_name}} details
+     * @throws HttpException 404 if not found
+     */
+    @GET("api/v1/{{entity_name.lower()}}s/{{id}}")
+    suspend fun get{{entity_name}}ById(
+        @Path("id") id: String
+    ): {{entity_name}}Dto
+
+    /**
+     * Search {{entity_name.lower()}}s
+     * 
+     * @param query Search query string
+     * @param page Page number
+     * @param size Items per page
+     * @return Matching {{entity_name.lower()}}s
+     */
+    @GET("api/v1/{{entity_name.lower()}}s/search")
+    suspend fun search{{entity_name}}s(
+        @Query("q") query: String,
+        @Query("page") page: Int = 0,
+        @Query("size") size: Int = 20
+    ): List<{{entity_name}}Dto>
+
+    /**
+     * Create a new {{entity_name.lower()}}
+     * 
+     * @param {{entity_name.lower()}} {{entity_name}} data to create
+     * @return Created {{entity_name.lower()}} with generated ID
+     * @throws HttpException 400 if validation fails
+     * @throws HttpException 401 if unauthorized
+     */
+    @POST("api/v1/{{entity_name.lower()}}s")
+    suspend fun create{{entity_name}}(
+        @Body {{entity_name.lower()}}: {{entity_name}}Dto
+    ): {{entity_name}}Dto
+
+    /**
+     * Update an existing {{entity_name.lower()}}
+     * 
+     * @param id {{entity_name}} ID to update
+     * @param {{entity_name.lower()}} Updated {{entity_name.lower()}} data
+     * @return Updated {{entity_name.lower()}}
+     * @throws HttpException 404 if not found
+     * @throws HttpException 400 if validation fails
+     */
+    @PUT("api/v1/{{entity_name.lower()}}s/{{id}}")
+    suspend fun update{{entity_name}}(
+        @Path("id") id: String,
+        @Body {{entity_name.lower()}}: {{entity_name}}Dto
+    ): {{entity_name}}Dto
+
+    /**
+     * Partially update a {{entity_name.lower()}}
+     * 
+     * @param id {{entity_name}} ID to update
+     * @param updates Map of fields to update
+     * @return Updated {{entity_name.lower()}}
+     */
+    @PATCH("api/v1/{{entity_name.lower()}}s/{{id}}")
+    suspend fun patch{{entity_name}}(
+        @Path("id") id: String,
+        @Body updates: Map<String, Any>
+    ): {{entity_name}}Dto
+
+    /**
+     * Delete a {{entity_name.lower()}}
+     * 
+     * @param id {{entity_name}} ID to delete
+     * @throws HttpException 404 if not found
+     */
+    @DELETE("api/v1/{{entity_name.lower()}}s/{{id}}")
+    suspend fun delete{{entity_name}}(
+        @Path("id") id: String
+    )
+
+    /**
+     * Batch delete {{entity_name.lower()}}s
+     * 
+     * @param ids List of {{entity_name.lower()}} IDs to delete
+     */
+    @HTTP(method = "DELETE", path = "api/v1/{{entity_name.lower()}}s/batch", hasBody = true)
+    suspend fun batchDelete{{entity_name}}s(
+        @Body ids: List<String>
+    )
+
+    /**
+     * Get {{entity_name.lower()}}s modified since timestamp
+     * Used for incremental sync
+     * 
+     * @param since Timestamp (milliseconds since epoch)
+     * @return {{entity_name.lower()}}s modified after the given time
+     */
+    @GET("api/v1/{{entity_name.lower()}}s/sync")
+    suspend fun get{{entity_name}}sSince(
+        @Query("since") since: Long
+    ): List<{{entity_name}}Dto>
+}

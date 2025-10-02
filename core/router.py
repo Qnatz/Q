@@ -1,14 +1,16 @@
 import json
-import re
 import logging
 from memory.prompt_manager import PromptManager
+from core.state_manager import ConversationState # Import ConversationState
 
 logger = logging.getLogger(__name__)
 
 class Router:
-    def __init__(self, unified_llm, prompt_manager: PromptManager):
+    def __init__(self, unified_llm, prompt_manager: PromptManager, context_builder):
         self.unified_llm = unified_llm
         self.prompt_manager = prompt_manager
+        self.context_builder = context_builder
+
         self.routing_options_map = {
             "update_programmer": "- update_programmer: You should call this route if the user's message should be added to the programmer's currently running session.",
             "start_planner": "- start_planner: You should call this route if the user's message is a **well-defined, complete request** that can be immediately sent to the planner for execution. For example: \"create a simple web app that is a notepad\"",
@@ -24,82 +26,97 @@ class Router:
         }
 
     def _get_available_routes(self, planner_status: str, programmer_status: str) -> str:
-        """
-        Determines the available routing options based on the status of the modules.
-        """
         available_routes = ["no_op", "chat", "technical_inquiry"]
 
         if planner_status == 'idle' and programmer_status == 'idle':
-            available_routes.extend(["start_planner", "start_planner_for_followup", "create_new_issue", "ideation", "code_assist"])
-        
+            available_routes.extend([
+                "start_planner", "start_planner_for_followup",
+                "create_new_issue", "ideation", "code_assist"
+            ])
+
         if planner_status == 'running':
             available_routes.append("update_planner")
-        
+
         if planner_status == 'interrupted':
             available_routes.append("resume_and_update_planner")
 
         if programmer_status == 'running':
             available_routes.append("update_programmer")
 
-        return "\n".join([self.routing_options_map[route] for route in available_routes])
+        # Return formatted string for prompt
+        return "\n".join([self.routing_options_map.get(r, r) for r in available_routes])
 
-    def get_route(self, user_query: str, state: dict) -> (str, str):
-        """
-        Determines the route for a user query based on the conversation state.
-        """
+    def get_route(self, user_query: str, state: dict, ignore_ideation_status: bool = False) -> (str, str):
+        # Fallback-safe status fetch
         planner_status = state.get("module_status", {}).get("planner", "idle")
         programmer_status = state.get("module_status", {}).get("programmer", "idle")
-        history = state.get("history", [])
+        user_id = state.get("user_id", "default_user")
+        request_source = state.get("request_source", "unknown")
 
-        prompt = self.prompt_manager.get_prompt("manager_routing_prompt")
-        if not prompt:
-            logger.error("Error: Could not load the routing prompt.")
-            return "no_op", "I encountered an internal error. Please try again."
+        # Try to build context safely
+        try:
+            # Create a temporary state object if ignoring ideation status
+            state_for_context = state
+            if ignore_ideation_status:
+                temp_state_dict = state.to_dict()
+                temp_state_dict["is_in_ideation_session"] = False
+                state_for_context = ConversationState(**temp_state_dict)
 
-        available_routes_str = self._get_available_routes(planner_status, programmer_status)
-        
-        # Dynamically create the placeholder values for the prompt
-        prompt_placeholders = {key: "" for key in self.routing_options_map.keys()}
-        for route in self.routing_options_map.keys():
-            if route in available_routes_str:
-                prompt_placeholders[route] = self.routing_options_map[route]
+            context = self.context_builder.build_conversation_context(state_for_context)
+            # context is a string here; also support dict fallbacks
+            if isinstance(context, str):
+                recent_conversation = context
+                semantic_context = context
+            else:
+                recent_conversation = context.get("recent_conversation", "none")
+                semantic_context = context.get("semantic_context", "none")
+        except Exception as e:
+            logger.warning(f"ContextBuilder failed, using defaults: {e}")
+            recent_conversation = "none"
+            semantic_context = "none"
 
-        task_plan_prompt = self.prompt_manager.get_prompt("TASK_PLAN_PROMPT") or ""
-        proposed_plan_prompt = self.prompt_manager.get_prompt("PROPOSED_PLAN_PROMPT") or ""
-        conversation_history_prompt = self.prompt_manager.get_prompt("CONVERSATION_HISTORY_PROMPT") or ""
+        # Routing prompt
+        routing_prompt = self.prompt_manager.get_prompt("manager_routing_prompt")
+        if not routing_prompt:
+            logger.error("Routing prompt not found.")
+            return "error", "Routing prompt is missing."
 
-        formatted_prompt = prompt.format(
-            PLANNER_STATUS=planner_status,
-            PROGRAMMER_STATUS=programmer_status,
-            CONVERSATION_HISTORY=json.dumps(history, indent=2),
-            ROUTING_OPTIONS=available_routes_str,
-            TASK_PLAN_PROMPT=task_plan_prompt,
-            PROPOSED_PLAN_PROMPT=proposed_plan_prompt,
-            CONVERSATION_HISTORY_PROMPT=conversation_history_prompt,
-            REQUEST_SOURCE="user_input" # Placeholder for now
-        )
+        # Compute available routes
+        available_routes = self._get_available_routes(planner_status, programmer_status)
 
+        # Fill the routing prompt with safe defaults
+        try:
+            formatted_prompt = routing_prompt.format(
+                PLANNER_STATUS=planner_status,
+                PROGRAMMER_STATUS=programmer_status,
+                conversation_history=recent_conversation,
+                semantic_context=semantic_context,
+                REQUEST_SOURCE=request_source,
+                ROUTING_OPTIONS=available_routes if available_routes else "none"
+            )
+        except KeyError as e:
+            logger.error(f"Routing prompt missing placeholder: {e}")
+            formatted_prompt = routing_prompt  # fallback without formatting
+
+        # Build messages for LLM
         messages = [
             {"role": "system", "content": formatted_prompt},
-            {"role": "user", "content": user_query}
+            {"role": "user", "content": f"{recent_conversation}\n\nUser Query: {user_query}"}
         ]
 
+        # Call the LLM and parse response safely
         try:
             llm_response = self.unified_llm.generate(messages, use_tools=False)
             try:
-                # The response is a JSON string, so we parse it directly
                 response_json = json.loads(llm_response)
                 route = response_json.get("route")
                 message = response_json.get("message")
-
                 if route and message:
                     return route, message
                 else:
-                    logger.error("LLM response did not contain a valid route or message.")
-                    return "no_op", "I had trouble deciding what to do next. Could you please rephrase?"
+                    return "no_op", "I could not determine a valid route. Please rephrase."
             except json.JSONDecodeError:
-                logger.error("LLM returned an invalid JSON response.")
-                return "no_op", "I received an invalid response. Could you please try again?"
+                return "no_op", "Received invalid JSON from LLM."
         except Exception as e:
-            logger.error(f"An unexpected error occurred during routing: {e}")
+            logger.error(f"Unexpected error during routing: {e}")
             return "no_op", "An unexpected error occurred during routing."

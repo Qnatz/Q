@@ -1,0 +1,384 @@
+package {{package_name}}.data.repository
+
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import timber.log.Timber
+import javax.inject.Inject
+import javax.inject.Singleton
+import {{package_name}}.data.local.dao.{{entity_name}}Dao
+import {{package_name}}.data.local.entity.{{entity_name}}Entity
+import {{package_name}}.data.remote.api.{{entity_name}}Api
+import {{package_name}}.data.remote.dto.{{entity_name}}Dto
+import {{package_name}}.domain.model.{{entity_name}}
+import {{package_name}}.domain.repository.{{entity_name}}Repository
+import {{package_name}}.util.Resource
+import {{package_name}}.util.NetworkMonitor
+import retrofit2.HttpException
+import java.io.IOException
+
+/**
+ * Repository implementation following Single Source of Truth pattern
+ * 
+ * Responsibilities:
+ * - Coordinate between local (Room) and remote (Retrofit) data sources
+ * - Implement offline-first strategy
+ * - Handle data synchronization
+ * - Map between data layer entities and domain models
+ * - Provide reactive data streams using Flow
+ * 
+ * @property {{entity_name.lower()}}Dao Local database access
+ * @property {{entity_name.lower()}}Api Remote API access
+ * @property networkMonitor Network connectivity monitoring
+ */
+@Singleton
+class {{entity_name}}RepositoryImpl @Inject constructor(
+    private val {{entity_name.lower()}}Dao: {{entity_name}}Dao,
+    private val {{entity_name.lower()}}Api: {{entity_name}}Api,
+    private val networkMonitor: NetworkMonitor
+) : {{entity_name}}Repository {
+
+    /**
+     * Get all {{entity_name.lower()}}s with offline-first approach
+     * 
+     * Flow:
+     * 1. Emit cached data immediately for fast UI response
+     * 2. If network available, fetch fresh data from API
+     * 3. Update cache with fresh data
+     * 4. Emit updated data to UI
+     */
+    override fun get{{entity_name}}s(): Flow<Resource<List<{{entity_name}}>>> = flow {
+        // Emit loading state
+        emit(Resource.Loading())
+
+        // First, emit cached data for immediate UI response
+        val cached{{entity_name}}s = {{entity_name.lower()}}Dao.getAll{{entity_name}}s()
+            .firstOrNull()
+            ?.map { it.toDomainModel() }
+        
+        if (cached{{entity_name}}s?.isNotEmpty() == true) {
+            emit(Resource.Success(cached{{entity_name}}s))
+        }
+
+        // If network is available, fetch fresh data
+        if (networkMonitor.isNetworkAvailable()) {
+            try {
+                val remote{{entity_name}}s = {{entity_name.lower()}}Api.get{{entity_name}}s()
+                
+                // Update local cache
+                {{entity_name.lower()}}Dao.deleteAll{{entity_name}}s()
+                {{entity_name.lower()}}Dao.insertAll{{entity_name}}s(
+                    remote{{entity_name}}s.map { it.toEntity() }
+                )
+                
+                // Emit fresh data
+                val updated{{entity_name}}s = remote{{entity_name}}s.map { it.toDomainModel() }
+                emit(Resource.Success(updated{{entity_name}}s))
+                
+                Timber.d("Successfully synced ${{updated{{entity_name}}s.size}} {{entity_name.lower()}}s")
+            } catch (e: HttpException) {
+                Timber.e(e, "HTTP error fetching {{entity_name.lower()}}s")
+                emit(
+                    Resource.Error(
+                        message = "Server error: ${{e.code()}}",
+                        data = cached{{entity_name}}s
+                    )
+                )
+            } catch (e: IOException) {
+                Timber.e(e, "Network error fetching {{entity_name.lower()}}s")
+                emit(
+                    Resource.Error(
+                        message = "Network error. Please check your connection.",
+                        data = cached{{entity_name}}s
+                    )
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Unexpected error fetching {{entity_name.lower()}}s")
+                emit(
+                    Resource.Error(
+                        message = "Unexpected error: ${{e.localizedMessage}}",
+                        data = cached{{entity_name}}s
+                    )
+                )
+            }
+        } else {
+            // No network, use cached data
+            if (cached{{entity_name}}s.isNullOrEmpty()) {
+                emit(Resource.Error("No internet connection and no cached data"))
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Get a single {{entity_name.lower()}} by ID
+     */
+    override fun get{{entity_name}}ById(id: String): Flow<Resource<{{entity_name}}>> = flow {
+        emit(Resource.Loading())
+
+        try {
+            // Try local cache first
+            val cached{{entity_name}} = {{entity_name.lower()}}Dao.get{{entity_name}}ById(id)
+                ?.toDomainModel()
+
+            if (cached{{entity_name}} != null) {
+                emit(Resource.Success(cached{{entity_name}}))
+            }
+
+            // Fetch from network if available
+            if (networkMonitor.isNetworkAvailable()) {
+                try {
+                    val remote{{entity_name}} = {{entity_name.lower()}}Api.get{{entity_name}}ById(id)
+                    
+                    // Update cache
+                    {{entity_name.lower()}}Dao.insert{{entity_name}}(remote{{entity_name}}.toEntity())
+                    
+                    emit(Resource.Success(remote{{entity_name}}.toDomainModel()))
+                } catch (e: HttpException) {
+                    if (e.code() == 404) {
+                        emit(Resource.Error("{{entity_name}} not found", cached{{entity_name}}))
+                    } else {
+                        emit(Resource.Error("Server error: ${{e.code()}}", cached{{entity_name}}))
+                    }
+                } catch (e: IOException) {
+                    emit(Resource.Error("Network error", cached{{entity_name}}))
+                }
+            } else if (cached{{entity_name}} == null) {
+                emit(Resource.Error("No internet connection and no cached data"))
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Error getting {{entity_name.lower()}} by id: $id")
+            emit(Resource.Error("Error: ${{e.localizedMessage}}"))
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Create a new {{entity_name.lower()}}
+     */
+    override suspend fun create{{entity_name}}({{entity_name.lower()}}: {{entity_name}}): Resource<{{entity_name}}> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Validate input
+                validate{{entity_name}}({{entity_name.lower()}})?.let { errorMessage ->
+                    return@withContext Resource.Error(errorMessage)
+                }
+
+                if (networkMonitor.isNetworkAvailable()) {
+                    // Create on server
+                    val created{{entity_name}} = {{entity_name.lower()}}Api.create{{entity_name}}({{entity_name.lower()}}.toDto())
+                    
+                    // Save to local cache
+                    {{entity_name.lower()}}Dao.insert{{entity_name}}(created{{entity_name}}.toEntity())
+                    
+                    Timber.d("Successfully created {{entity_name.lower()}}: ${{created{{entity_name}}.id}}")
+                    Resource.Success(created{{entity_name}}.toDomainModel())
+                } else {
+                    // Save locally with pending sync flag
+                    val entity = {{entity_name.lower()}}.toEntity().copy(pendingSync = true)
+                    {{entity_name.lower()}}Dao.insert{{entity_name}}(entity)
+                    
+                    Resource.Success({{entity_name.lower()}})
+                }
+            } catch (e: HttpException) {
+                Timber.e(e, "HTTP error creating {{entity_name.lower()}}")
+                Resource.Error("Server error: ${{e.code()}}")
+            } catch (e: IOException) {
+                Timber.e(e, "Network error creating {{entity_name.lower()}}")
+                Resource.Error("Network error. Changes saved locally.")
+            } catch (e: Exception) {
+                Timber.e(e, "Error creating {{entity_name.lower()}}")
+                Resource.Error("Error: ${{e.localizedMessage}}")
+            }
+        }
+    }
+
+    /**
+     * Update an existing {{entity_name.lower()}}
+     */
+    override suspend fun update{{entity_name}}({{entity_name.lower()}}: {{entity_name}}): Resource<{{entity_name}}> {
+        return withContext(Dispatchers.IO) {
+            try {
+                // Validate input
+                validate{{entity_name}}({{entity_name.lower()}})?.let { errorMessage ->
+                    return@withContext Resource.Error(errorMessage)
+                }
+
+                if (networkMonitor.isNetworkAvailable()) {
+                    // Update on server
+                    val updated{{entity_name}} = {{entity_name.lower()}}Api.update{{entity_name}}(
+                        {{entity_name.lower()}}.id,
+                        {{entity_name.lower()}}.toDto()
+                    )
+                    
+                    // Update local cache
+                    {{entity_name.lower()}}Dao.update{{entity_name}}(updated{{entity_name}}.toEntity())
+                    
+                    Timber.d("Successfully updated {{entity_name.lower()}}: ${{updated{{entity_name}}.id}}")
+                    Resource.Success(updated{{entity_name}}.toDomainModel())
+                } else {
+                    // Update locally with pending sync flag
+                    val entity = {{entity_name.lower()}}.toEntity().copy(pendingSync = true)
+                    {{entity_name.lower()}}Dao.update{{entity_name}}(entity)
+                    
+                    Resource.Success({{entity_name.lower()}})
+                }
+            } catch (e: HttpException) {
+                Timber.e(e, "HTTP error updating {{entity_name.lower()}}")
+                Resource.Error("Server error: ${{e.code()}}")
+            } catch (e: IOException) {
+                Timber.e(e, "Network error updating {{entity_name.lower()}}")
+                Resource.Error("Network error. Changes saved locally.")
+            } catch (e: Exception) {
+                Timber.e(e, "Error updating {{entity_name.lower()}}")
+                Resource.Error("Error: ${{e.localizedMessage}}")
+            }
+        }
+    }
+
+    /**
+     * Delete a {{entity_name.lower()}}
+     */
+    override suspend fun delete{{entity_name}}(id: String): Resource<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (networkMonitor.isNetworkAvailable()) {
+                    // Delete from server
+                    {{entity_name.lower()}}Api.delete{{entity_name}}(id)
+                    
+                    // Delete from local cache
+                    {{entity_name.lower()}}Dao.delete{{entity_name}}ById(id)
+                    
+                    Timber.d("Successfully deleted {{entity_name.lower()}}: $id")
+                    Resource.Success(Unit)
+                } else {
+                    // Mark for deletion when online
+                    {{entity_name.lower()}}Dao.mark{{entity_name}}ForDeletion(id)
+                    
+                    Resource.Success(Unit)
+                }
+            } catch (e: HttpException) {
+                Timber.e(e, "HTTP error deleting {{entity_name.lower()}}")
+                Resource.Error("Server error: ${{e.code()}}")
+            } catch (e: IOException) {
+                Timber.e(e, "Network error deleting {{entity_name.lower()}}")
+                Resource.Error("Network error. Will delete when online.")
+            } catch (e: Exception) {
+                Timber.e(e, "Error deleting {{entity_name.lower()}}")
+                Resource.Error("Error: ${{e.localizedMessage}}")
+            }
+        }
+    }
+
+    /**
+     * Sync pending changes when network becomes available
+     */
+    override suspend fun syncPendingChanges(): Resource<Unit> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!networkMonitor.isNetworkAvailable()) {
+                    return@withContext Resource.Error("No network connection")
+                }
+
+                val pendingEntities = {{entity_name.lower()}}Dao.getPending{{entity_name}}s()
+                
+                pendingEntities.forEach { entity ->
+                    try {
+                        if (entity.markedForDeletion) {
+                            {{entity_name.lower()}}Api.delete{{entity_name}}(entity.id)
+                            {{entity_name.lower()}}Dao.delete{{entity_name}}ById(entity.id)
+                        } else if (entity.isNew) {
+                            val created = {{entity_name.lower()}}Api.create{{entity_name}}(entity.toDto())
+                            {{entity_name.lower()}}Dao.update{{entity_name}}(
+                                created.toEntity().copy(pendingSync = false, isNew = false)
+                            )
+                        } else {
+                            val updated = {{entity_name.lower()}}Api.update{{entity_name}}(entity.id, entity.toDto())
+                            {{entity_name.lower()}}Dao.update{{entity_name}}(
+                                updated.toEntity().copy(pendingSync = false)
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error syncing {{entity_name.lower()}}: ${{entity.id}}")
+                        // Continue with next entity
+                    }
+                }
+                
+                Timber.d("Successfully synced ${{pendingEntities.size}} pending changes")
+                Resource.Success(Unit)
+            } catch (e: Exception) {
+                Timber.e(e, "Error syncing pending changes")
+                Resource.Error("Sync failed: ${{e.localizedMessage}}")
+            }
+        }
+    }
+
+    /**
+     * Validate {{entity_name.lower()}} data
+     * @return Error message if validation fails, null if valid
+     */
+    private fun validate{{entity_name}}({{entity_name.lower()}}: {{entity_name}}): String? {
+        return when {
+            {{entity_name.lower()}}.name.isBlank() -> "Name cannot be empty"
+            {{entity_name.lower()}}.name.length < 3 -> "Name must be at least 3 characters"
+            {{entity_name.lower()}}.name.length > 100 -> "Name cannot exceed 100 characters"
+            // Add more validation rules as needed
+            else -> null
+        }
+    }
+}
+
+// Extension functions for mapping between layers
+private fun {{entity_name}}Entity.toDomainModel(): {{entity_name}} {
+    return {{entity_name}}(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt
+    )
+}
+
+private fun {{entity_name}}Dto.toDomainModel(): {{entity_name}} {
+    return {{entity_name}}(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt
+    )
+}
+
+private fun {{entity_name}}Dto.toEntity(): {{entity_name}}Entity {
+    return {{entity_name}}Entity(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt,
+        pendingSync = false,
+        isNew = false,
+        markedForDeletion = false
+    )
+}
+
+private fun {{entity_name}}.toDto(): {{entity_name}}Dto {
+    return {{entity_name}}Dto(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt
+    )
+}
+
+private fun {{entity_name}}.toEntity(): {{entity_name}}Entity {
+    return {{entity_name}}Entity(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt,
+        pendingSync = false,
+        isNew = false,
+        markedForDeletion = false
+    )
+}

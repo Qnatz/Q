@@ -20,18 +20,38 @@ from core.ui import say_assistant, say_error, say_system, say_user
 from core.workflow_manager import WorkflowManager
 from memory.prompt_manager import PromptManager
 from core.ide_server import IDEServer
-from schemas.project_schema import ProjectMetadata
+
+# Import UnifiedMemory and its dependencies
+from memory.unified_memory import UnifiedMemory, TinyDBManager, ChromaDBManager
+import chromadb
+from chromadb.config import Settings
+
 console = Console()
 
 
 class OrchestratorAgent:
     def __init__(self):
-        self.state_manager = StateManager()
-        self.agent_manager = AgentManager()
-        self.prompt_manager = PromptManager() # Corrected initialization
+        # Instantiate UnifiedMemory and its dependencies
+        tinydb_manager = TinyDBManager(db_path="data/storage/tinydb.json") # Changed path
+        
+        chroma_client = chromadb.PersistentClient(
+            path="data/storage/chromadb",
+            settings=Settings(anonymized_telemetry=False)
+        )
+        chroma_collection = chroma_client.get_or_create_collection(
+            name="prompts",
+            metadata={"description": "QAI Agent prompt storage"}
+        )
+        chromadb_manager = ChromaDBManager(collection=chroma_collection)
+        
+        unified_memory = UnifiedMemory(tinydb_manager=tinydb_manager, chromadb_manager=chromadb_manager)
+
+        self.state_manager = StateManager(unified_memory=unified_memory)
+        self.agent_manager = AgentManager(unified_memory=unified_memory, state_manager=self.state_manager) # Pass unified_memory and state_manager
+        self.prompt_manager = PromptManager(unified_memory=unified_memory) # Pass unified_memory
         self.llm_service = LLMService(self.agent_manager.unified_llm, self.prompt_manager)
-        self.context_builder = ContextBuilder(self.llm_service, self.state_manager.unified_memory)
-        self.router = Router(self.agent_manager.unified_llm, self.agent_manager.prompt_manager) # Corrected initialization
+        self.context_builder = ContextBuilder(self.agent_manager.unified_llm, self.state_manager.unified_memory)
+        self.router = Router(self.agent_manager.unified_llm, self.agent_manager.prompt_manager, self.context_builder)
         self.workflow_manager = WorkflowManager(
             self.agent_manager.planner,
             self.agent_manager.manager,
@@ -63,7 +83,7 @@ class OrchestratorAgent:
 
         say_system("Existing Projects:")
         for i, project in enumerate(projects):
-            say_system(f"{i + 1}. {project.project_name} (Status: {project.status}, Completion: {project.completion_rate:.0%})")
+            say_system(f"{i + 1}. {project['project_name']} (Status: {project['status']}, Completion: {project['completion_rate']:.0%})")
 
         while True:
             choice = console.input("[bold blue]💭 Enter the number of the project to resume, or type 'new' to start a new project: [/bold blue]").strip()
@@ -81,7 +101,12 @@ class OrchestratorAgent:
     def process_query(self, user_query: str, user_id: str) -> dict:
         """Process user query with proper state handling"""
         try:
-            state = self.state_manager.get_conversation_state(user_id)
+            # First, get the user's general state to find the current project ID
+            general_state = self.state_manager.get_conversation_state(user_id)
+            project_id = general_state.current_project_id
+
+            # Now, get the project-specific state
+            state = self.state_manager.get_conversation_state(user_id, project_id)
 
             state.history.append(
                 {
@@ -92,6 +117,15 @@ class OrchestratorAgent:
             )
 
             state.turn += 1
+
+            # Determine the intended route without considering current ideation session status
+            # This helps in breaking out of a lingering ideation session if a new, clear request is made.
+            potential_route, _ = self.router.get_route(user_query, state, ignore_ideation_status=True)
+
+            # If a new, non-ideation route is detected, clear the ideation session flag
+            if state.is_in_ideation_session and potential_route not in ["ideation", "no_op", "chat", "technical_inquiry"]:
+                logger.info(f"Breaking out of ideation session due to new request: {potential_route}")
+                state.is_in_ideation_session = False
 
             # Route the query or continue ideation/resumed workflow
             if state.is_in_ideation_session:
@@ -106,7 +140,7 @@ class OrchestratorAgent:
             response_dict = {"type": route, "message": message}
 
             # Handle the response
-            self.response_handler.handle_response(response_dict, user_id)
+            self.response_handler.handle_response(response_dict, user_id, project_id)
 
             # Check if ideation is complete and a build is pending
             if state.pending_build_confirmation:
@@ -127,7 +161,7 @@ class OrchestratorAgent:
                 }
             )
 
-            self.state_manager._update_conversation_state(user_id, state)
+            self.state_manager._update_conversation_state(user_id, state, project_id)
             return response_dict
 
         except Exception as e:
@@ -152,7 +186,7 @@ class OrchestratorAgent:
             project_metadata = self.state_manager.unified_memory.get_project_metadata(selected_project_id)
             if project_metadata:
                 # Reconstruct conversation state from project metadata
-                state = self.state_manager.get_conversation_state(user_id)
+                state = self.state_manager.get_conversation_state(user_id, selected_project_id)
                 state.history = project_metadata.conversation_history
                 state.current_project_id = project_metadata.project_id
                 state.pending_build_confirmation = {
@@ -173,11 +207,20 @@ class OrchestratorAgent:
                 elif project_metadata.status == "review":
                     state.current_phase = "completed"
                 
-                self.state_manager._update_conversation_state(user_id, state)
+                self.state_manager._update_conversation_state(user_id, state, selected_project_id)
                 say_system(f"Project {project_metadata.project_name} loaded. Current status: {project_metadata.status}")
             else:
                 say_error(f"Failed to load project {selected_project_id}. Starting new session.")
                 selected_project_id = None
+
+        else:
+            # New project: perform initial web search and store results
+            say_system("Starting a new project. Performing initial research...")
+            
+            # ... (web search code - currently commented out) ...
+            
+            # After setting up a new project, wait for the first actual user query
+            say_system("New project started. What would you like to build?")
 
         while True:
             try:
@@ -197,6 +240,10 @@ class OrchestratorAgent:
                 if not user_input:
                     continue
 
+                # Only process query if it's not the "new" command itself
+                if user_input.lower() == "new" and selected_project_id is None:
+                    say_error("You've already started a new project. Please provide your idea.")
+                    continue
 
                 with Status("[bold green]Assistant is thinking...", console=console, spinner="dots"):
                     response = self.process_query(user_input, user_id)

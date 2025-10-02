@@ -1,13 +1,13 @@
 # context_builder.py
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass
 import hashlib
 import json
 import time
 import httpx
 
-from core.config import MAX_RECENT_TURNS, MAX_SUMMARY_TOKENS
+from core.config import MAX_SUMMARY_TOKENS
 from utils.ui_helpers import say_error
 from core.state_manager import ConversationState
 
@@ -129,9 +129,10 @@ class ContextBuilder:
     def build_conversation_context(self, state: dict) -> str:
         """Build optimized conversation context"""
         user_id = state.get("user_id", "default_user")
+        project_id = state.get("current_project_id")
         current_query = state["history"][-1]["content"]
 
-        context = self.unified_memory.get_conversation_context(user_id, current_query)
+        context = self.unified_memory.get_conversation_context(user_id, current_query, project_id)
 
         context_str = ""
         if context.get("relevant_facts"):
@@ -152,3 +153,8 @@ class ContextBuilder:
                 context_str += f"{msg['metadata']['role']}: {msg['content']}\n"
 
         return context_str
+
+    # 🔑 Alias to prevent router crashes
+    def get_conversation_context(self, state: dict) -> str:
+        """Alias for build_conversation_context (backward compatibility)."""
+        return self.build_conversation_context(state)

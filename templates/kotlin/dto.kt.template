@@ -1,0 +1,118 @@
+package {{package_name}}.data.remote.dto
+
+import com.google.gson.annotations.SerializedName
+import {{package_name}}.domain.model.{{entity_name}}
+
+/**
+ * Data Transfer Object for {{entity_name}}
+ * 
+ * Used for:
+ * - Network layer communication (Retrofit)
+ * - JSON serialization/deserialization
+ * - API contract definition
+ * 
+ * Best Practices:
+ * - Use @SerializedName for JSON field mapping
+ * - Provide default values for optional fields
+ * - Keep DTOs simple - no business logic
+ * - Separate from domain models for flexibility
+ * - Use nullable types for optional API fields
+ */
+data class {{entity_name}}Dto(
+    @SerializedName("id")
+    val id: String,
+
+    @SerializedName("name")
+    val name: String,
+
+    @SerializedName("description")
+    val description: String? = null,
+
+    @SerializedName("created_at")
+    val createdAt: Long,
+
+    @SerializedName("updated_at")
+    val updatedAt: Long,
+
+    @SerializedName("version")
+    val version: Int = 1,
+
+    // Metadata from API
+    @SerializedName("created_by")
+    val createdBy: String? = null,
+
+    @SerializedName("modified_by")
+    val modifiedBy: String? = null
+)
+
+/**
+ * Extension function to convert DTO to Domain model
+ */
+fun {{entity_name}}Dto.toDomainModel(): {{entity_name}} {
+    return {{entity_name}}(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt
+    )
+}
+
+/**
+ * Extension function to convert Domain model to DTO
+ */
+fun {{entity_name}}.toDto(): {{entity_name}}Dto {
+    return {{entity_name}}Dto(
+        id = this.id,
+        name = this.name,
+        description = this.description,
+        createdAt = this.createdAt,
+        updatedAt = this.updatedAt
+    )
+}
+
+/**
+ * Generic API Response wrapper
+ */
+data class ApiResponse<T>(
+    @SerializedName("success")
+    val success: Boolean,
+
+    @SerializedName("data")
+    val data: T? = null,
+
+    @SerializedName("message")
+    val message: String? = null,
+
+    @SerializedName("error_code")
+    val errorCode: String? = null,
+
+    @SerializedName("timestamp")
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+/**
+ * Paginated API Response
+ */
+data class PaginatedResponse<T>(
+    @SerializedName("content")
+    val content: List<T>,
+
+    @SerializedName("page")
+    val page: Int,
+
+    @SerializedName("size")
+    val size: Int,
+
+    @SerializedName("total_elements")
+    val totalElements: Long,
+
+    @SerializedName("total_pages")
+    val totalPages: Int,
+
+    @SerializedName("last")
+    val isLast: Boolean,
+
+    @SerializedName("first")
+    val isFirst: Boolean
+)

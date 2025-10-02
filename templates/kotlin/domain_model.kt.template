@@ -1,0 +1,136 @@
+package {{package_name}}.domain.model
+
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
+import java.util.UUID
+
+/**
+ * Domain model for {{entity_name}}
+ * 
+ * This is the core business model used throughout the app
+ * 
+ * Characteristics:
+ * - Framework-independent (pure Kotlin/business logic)
+ * - Immutable data class
+ * - Parcelable for passing between Android components
+ * - Contains business logic validation
+ * - No Android dependencies
+ * 
+ * Benefits of separate domain models:
+ * - Clean Architecture separation
+ * - Flexibility to change API/DB without affecting business logic
+ * - Easier testing (no framework dependencies)
+ * - Clear business rules and validation
+ */
+@Parcelize
+data class {{entity_name}}(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val description: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val tags: List<String> = emptyList(),
+    val status: {{entity_name}}Status = {{entity_name}}Status.ACTIVE,
+    val metadata: Map<String, String> = emptyMap()
+) : Parcelable {
+
+    /**
+     * Business validation logic
+     */
+    fun isValid(): Boolean {
+        return name.isNotBlank() && 
+               name.length >= 3 && 
+               name.length <= 100
+    }
+
+    /**
+     * Get validation errors
+     */
+    fun getValidationErrors(): List<String> {
+        val errors = mutableListOf<String>()
+        
+        if (name.isBlank()) {
+            errors.add("Name cannot be empty")
+        }
+        if (name.length < 3) {
+            errors.add("Name must be at least 3 characters")
+        }
+        if (name.length > 100) {
+            errors.add("Name cannot exceed 100 characters")
+        }
+        
+        return errors
+    }
+
+    /**
+     * Check if this is a new (unsaved) {{entity_name.lower()}}
+     */
+    fun isNew(): Boolean {
+        return createdAt == updatedAt
+    }
+
+    /**
+     * Check if {{entity_name.lower()}} was recently updated (within last hour)
+     */
+    fun isRecentlyUpdated(): Boolean {
+        val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000)
+        return updatedAt > oneHourAgo
+    }
+
+    /**
+     * Create a copy with updated timestamp
+     */
+    fun withUpdatedTimestamp(): {{entity_name}} {
+        return copy(updatedAt = System.currentTimeMillis())
+    }
+
+    companion object {
+        /**
+         * Create an empty {{entity_name.lower()}} for form initialization
+         */
+        fun empty(): {{entity_name}} {
+            return {{entity_name}}(
+                id = "",
+                name = "",
+                description = null
+            )
+        }
+
+        /**
+         * Create a sample {{entity_name.lower()}} for preview/testing
+         */
+        fun sample(): {{entity_name}} {
+            return {{entity_name}}(
+                id = UUID.randomUUID().toString(),
+                name = "Sample {{entity_name}}",
+                description = "This is a sample {{entity_name.lower()}} for testing",
+                tags = listOf("sample", "test"),
+                status = {{entity_name}}Status.ACTIVE
+            )
+        }
+    }
+}
+
+/**
+ * Status enum for {{entity_name}}
+ */
+enum class {{entity_name}}Status {
+    ACTIVE,
+    INACTIVE,
+    ARCHIVED,
+    PENDING;
+
+    fun isActive(): Boolean = this == ACTIVE
+    fun isInactive(): Boolean = this == INACTIVE
+    fun isArchived(): Boolean = this == ARCHIVED
+    fun isPending(): Boolean = this == PENDING
+}
+
+/**
+ * Result wrapper for operations
+ */
+sealed class {{entity_name}}Result {
+    data class Success(val {{entity_name.lower()}}: {{entity_name}}) : {{entity_name}}Result()
+    data class Error(val message: String, val exception: Throwable? = null) : {{entity_name}}Result()
+    object Loading : {{entity_name}}Result()
+}

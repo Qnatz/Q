@@ -77,3 +77,27 @@ When the agent is launched from within a project directory and the user's reques
 
 *   **Schemas (`schemas/`):** Located at the root of the project, this directory enforces the structure of the JSON data passed between the agent's internal modules, including the new `code_correction_state` within the `orchestration_schema`.
 *   **Persistent State (`data/storage/`):</strong All persistent data, including the agent's memory and any software it generates, is stored in the `data/storage` and `projects` directories.
+
+---
+
+## 6. Refined Programming Workflow (New Architecture)
+
+A major architectural refactoring has been completed to address inconsistencies and bugs in the code generation phase. The new design clarifies the roles of the `ProgrammingModule` and the `StepwiseImplementationTool`, adhering to a much cleaner separation of concerns while retaining the benefits of a stepwise execution model.
+
+**Previous Problem:** The `ProgrammingModule` was a simple pass-through that delegated all responsibility to the `StepwiseImplementationTool`. This tool was overly "conscious," trying to manage the entire task loop and making incorrect assumptions about prompts and build cycles, leading to failures.
+
+**New Architecture:**
+
+1.  **`ProgrammingModule` as the "Conductor":**
+    *   The `ProgrammingModule` is now a first-class agent process, responsible for orchestrating the entire programming phase.
+    *   It iterates through each task from the plan one by one.
+    *   For each task, it prepares the complete system prompt by loading the `orchestrator_programming_phase_prompt.md` template.
+    *   Crucially, it now contains the logic to detect the project's programming language and injects the correct, language-specific guidance (e.g., "Follow Python PEP 8") into the `{CUSTOM_RULES}` placeholder of the prompt.
+
+2.  **`StepwiseImplementationTool` as the "Worker":**
+    *   The tool has been simplified into a "dumb" but powerful single-task executor.
+    *   It no longer contains a loop to iterate through the plan. Its `execute` method is focused on implementing only the single task it receives.
+    *   It receives the full, context-rich system prompt directly from the `ProgrammingModule`, ensuring the LLM has the correct instructions for every call.
+    *   It retains its vital logic for running build/test cycles and intelligently determining if a build is even necessary for a given task (e.g., skipping builds for documentation changes).
+
+This new design makes the `ProgrammingModule` the "conscious" part of the operation, managing the overall flow and context, while the `StepwiseImplementationTool` acts as a focused worker. This resolves the prompt and build-cycle issues and makes the entire programming workflow more robust, predictable, and consistent with the design of the other agent modules.

@@ -1,0 +1,288 @@
+package {{package_name}}.presentation.{{entity_name.lower()}}
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import timber.log.Timber
+import {{package_name}}.domain.model.{{entity_name}}
+import {{package_name}}.util.UiEvent
+
+/**
+ * Main {{entity_name}} Screen using Jetpack Compose
+ * 
+ * Following Compose best practices:
+ * - Stateless composable (state hoisted to ViewModel)
+ * - collectAsStateWithLifecycle for lifecycle-aware state collection
+ * - Proper side effect handling with LaunchedEffect
+ * - Material 3 design components
+ * - Accessibility support
+ * 
+ * @param viewModel The ViewModel providing state and handling actions
+ * @param onNavigateToDetail Navigation callback for detail screen
+ * @param onNavigateBack Navigation callback for back action
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun {{entity_name}}Screen(
+    viewModel: {{entity_name}}ViewModel = hiltViewModel(),
+    onNavigateToDetail: (String) -> Unit,
+    onNavigateBack: () -> Unit
+) {
+    // Collect state with lifecycle awareness
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    
+    // Snackbar host state for showing messages
+    val snackbarHostState = remember { SnackbarHostState() }
+    
+    // Handle one-time UI events
+    LaunchedEffect(Unit) {
+        viewModel.uiEvent.collect { event ->
+            when (event) {
+                is UiEvent.ShowSnackbar -> {
+                    snackbarHostState.showSnackbar(
+                        message = event.message,
+                        duration = SnackbarDuration.Short
+                    )
+                }
+                is UiEvent.Navigate -> {
+                    onNavigateToDetail(event.route)
+                }
+                is UiEvent.NavigateBack -> {
+                    onNavigateBack()
+                }
+            }
+        }
+    }
+    
+    Scaffold(
+        topBar = {
+            {{entity_name}}TopBar(
+                searchQuery = searchQuery,
+                onSearchQueryChange = { query ->
+                    viewModel.onAction({{entity_name}}Action.Search(query))
+                },
+                onNavigateBack = onNavigateBack
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { 
+                    // Navigate to create screen or show dialog
+                    Timber.d("Create new {{entity_name.lower()}}")
+                },
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Create {{entity_name}}"
+                )
+            }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { paddingValues ->
+        {{entity_name}}Content(
+            uiState = uiState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+            onAction = viewModel::onAction,
+            onItemClick = { {{entity_name.lower()}} ->
+                onNavigateToDetail({{entity_name.lower()}}.id)
+            }
+        )
+    }
+}
+
+/**
+ * Top App Bar with search functionality
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun {{entity_name}}TopBar(
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onNavigateBack: () -> Unit
+) {
+    var isSearchActive by remember { mutableStateOf(false) }
+    
+    TopAppBar(
+        title = {
+            if (isSearchActive) {
+                TextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Search {{entity_name.lower()}}s...") },
+                    singleLine = true,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+            } else {
+                Text("{{entity_name}}s")
+            }
+        },
+        navigationIcon = {
+            IconButton(onClick = onNavigateBack) {
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Navigate back"
+                )
+            }
+        },
+        actions = {
+            IconButton(
+                onClick = { 
+                    isSearchActive = !isSearchActive
+                    if (!isSearchActive) {
+                        onSearchQueryChange("")
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                    contentDescription = if (isSearchActive) "Close search" else "Search"
+                )
+            }
+            IconButton(onClick = { /* Show filter options */ }) {
+                Icon(
+                    imageVector = Icons.Default.FilterList,
+                    contentDescription = "Filter"
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+    )
+}
+
+/**
+ * Main content area
+ */
+@Composable
+private fun {{entity_name}}Content(
+    uiState: {{entity_name}}UiState,
+    modifier: Modifier = Modifier,
+    onAction: ({{entity_name}}Action) -> Unit,
+    onItemClick: ({{entity_name}}) -> Unit
+) {
+    Box(modifier = modifier) {
+        when {
+            uiState.isLoading && uiState.{{entity_name.lower()}}s.isEmpty() -> {
+                LoadingState(modifier = Modifier.align(Alignment.Center))
+            }
+            uiState.error != null && uiState.{{entity_name.lower()}}s.isEmpty() -> {
+                ErrorState(
+                    message = uiState.error,
+                    onRetry = { onAction({{entity_name}}Action.Refresh) },
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            uiState.{{entity_name.lower()}}s.isEmpty() -> {
+                EmptyState(modifier = Modifier.align(Alignment.Center))
+            }
+            else -> {
+                {{entity_name}}List(
+                    {{entity_name.lower()}}s = uiState.{{entity_name.lower()}}s,
+                    onItemClick = onItemClick,
+                    onDeleteClick = { {{entity_name.lower()}} ->
+                        onAction({{entity_name}}Action.Delete({{entity_name.lower()}}.id))
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        
+        // Show loading indicator on top when refreshing
+        if (uiState.isLoading && uiState.{{entity_name.lower()}}s.isNotEmpty()) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+            )
+        }
+    }
+}
+
+/**
+ * List of {{entity_name.lower()}}s
+ */
+@Composable
+private fun {{entity_name}}List(
+    {{entity_name.lower()}}s: List<{{entity_name}}>,
+    onItemClick: ({{entity_name}}) -> Unit,
+    onDeleteClick: ({{entity_name}}) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(
+            items = {{entity_name.lower()}}s,
+            key = { it.id }
+        ) { {{entity_name.lower()}} ->
+            {{entity_name}}Item(
+                {{entity_name.lower()}} = {{entity_name.lower()}},
+                onClick = { onItemClick({{entity_name.lower()}}) },
+                onDeleteClick = { onDeleteClick({{entity_name.lower()}}) }
+            )
+        }
+    }
+}
+
+/**
+ * Individual {{entity_name.lower()}} item card
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun {{entity_name}}Item(
+    {{entity_name.lower()}}: {{entity_name}},
+    onClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = {{entity_name.lower()}}.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                
+                {{entity_name.lower()}}.description?.let { description ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
+    }
+}

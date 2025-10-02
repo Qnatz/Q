@@ -1,7 +1,7 @@
 """UnifiedLLM: unified entrypoint for CrewAI-like agents."""
 
 import json
-# import logging
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from .backends import (
@@ -12,9 +12,7 @@ from .backends import (
 from .config import Config
 from .utils import json_dumps_safe
 
-# logger = logging.getLogger(__name__)
-# logger.addHandler(logging.StreamHandler())
-# logger.setLevel(logging.WARNING) # Changed to WARNING
+logger = logging.getLogger(__name__)
 
 
 class UnifiedLLM:
@@ -181,4 +179,4 @@ class UnifiedLLM:
 
         # For now, just call the main generate method.
         # Future: Implement chunking logic if needed.
-        return self.generate(messages, use_tools=False)
+        return self.generate(messages, use_tools=True)

@@ -1,0 +1,81 @@
+package {{package_name}}.data.local.entity
+
+import androidx.room.*
+import java.util.UUID
+
+/**
+ * Room database entity for {{entity_name}}
+ * 
+ * Annotations:
+ * - @Entity: Marks this as a database table
+ * - @PrimaryKey: Defines the primary key
+ * - @ColumnInfo: Customizes column properties
+ * - @Index: Creates indexes for faster queries
+ * - @ForeignKey: Defines relationships between tables
+ * 
+ * Best Practices:
+ * - Use data class for automatic equals/hashCode/toString
+ * - Provide default values where appropriate
+ * - Use appropriate data types (Long for timestamps, String for IDs)
+ * - Add indices on frequently queried columns
+ * - Include sync-related fields for offline-first architecture
+ */
+@Entity(
+    tableName = "{{entity_name.lower()}}s",
+    indices = [
+        Index(value = ["name"]),
+        Index(value = ["createdAt"]),
+        Index(value = ["pendingSync"])
+    ]
+)
+data class {{entity_name}}Entity(
+    @PrimaryKey
+    @ColumnInfo(name = "id")
+    val id: String = UUID.randomUUID().toString(),
+
+    @ColumnInfo(name = "name")
+    val name: String,
+
+    @ColumnInfo(name = "description")
+    val description: String? = null,
+
+    @ColumnInfo(name = "createdAt")
+    val createdAt: Long = System.currentTimeMillis(),
+
+    @ColumnInfo(name = "updatedAt")
+    val updatedAt: Long = System.currentTimeMillis(),
+
+    // Offline-first support fields
+    @ColumnInfo(name = "pendingSync", defaultValue = "0")
+    val pendingSync: Boolean = false,
+
+    @ColumnInfo(name = "isNew", defaultValue = "0")
+    val isNew: Boolean = false,
+
+    @ColumnInfo(name = "markedForDeletion", defaultValue = "0")
+    val markedForDeletion: Boolean = false,
+
+    // Sync metadata
+    @ColumnInfo(name = "lastSyncedAt")
+    val lastSyncedAt: Long? = null,
+
+    @ColumnInfo(name = "version", defaultValue = "1")
+    val version: Int = 1
+)
+
+/**
+ * Type converters for complex data types
+ * Required when storing non-primitive types in Room
+ */
+class {{entity_name}}Converters {
+    
+    @TypeConverter
+    fun fromStringList(value: String?): List<String> {
+        return value?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+    }
+
+    @TypeConverter
+    fun toStringList(list: List<String>?): String {
+        return list?.joinToString(",") ?: ""
+    }
+}

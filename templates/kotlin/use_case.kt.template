@@ -1,0 +1,62 @@
+package {{package_name}}.domain.usecase
+
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import {{package_name}}.domain.model.{{entity_name}}
+import {{package_name}}.domain.repository.{{entity_name}}Repository
+import {{package_name}}.util.Resource
+
+/**
+ * Use Case for {{operation}} {{entity_name.lower()}}
+ * 
+ * Use Cases represent single business actions in Clean Architecture
+ * 
+ * Responsibilities:
+ * - Encapsulate specific business logic
+ * - Coordinate between multiple repositories if needed
+ * - Apply business rules and validation
+ * - Transform data for specific use cases
+ * - Keep ViewModels thin and focused
+ * 
+ * Benefits:
+ * - Reusable across different ViewModels/Screens
+ * - Testable in isolation
+ * - Clear business intention
+ * - Easy to modify without affecting UI
+ */
+class {{operation}}{{entity_name}}UseCase @Inject constructor(
+    private val repository: {{entity_name}}Repository
+) {
+
+    /**
+     * Execute the use case
+     * 
+     * @param {{entity_name.lower()}} The {{entity_name.lower()}} to {{operation.lower()}}
+     * @return Flow emitting Resource states (Loading, Success, Error)
+     */
+    operator fun invoke({{entity_name.lower()}}: {{entity_name}}): Flow<Resource<{{entity_name}}>> {
+        // Business validation
+        val validationErrors = {{entity_name.lower()}}.getValidationErrors()
+        if (validationErrors.isNotEmpty()) {
+            throw ValidationException(validationErrors.joinToString(", "))
+        }
+
+        // Apply business rules
+        val processed{{entity_name}} = apply{{operation}}Rules({{entity_name.lower()}})
+
+        // Delegate to repository
+        return repository.{{operation.lower()}}{{entity_name}}(processed{{entity_name}})
+    }
+
+    /**
+     * Apply business rules specific to {{operation}}
+     */
+    private fun apply{{operation}}Rules({{entity_name.lower()}}: {{entity_name}}): {{entity_name}} {
+        return {{entity_name.lower()}}.withUpdatedTimestamp()
+    }
+}
+
+/**
+ * Validation exception
+ */
+class ValidationException(message: String) : Exception(message)

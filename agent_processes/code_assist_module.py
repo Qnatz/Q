@@ -23,16 +23,7 @@ class CodeAssistResult:
     executed_tools: Optional[List[str]] = None
     warnings: Optional[List[str]] = None
 
-class CodeAssistAgent:
-    def __init__(self, llm_service: LLMService, tool_registry: ToolRegistry, prompt_manager: PromptManager):
-        self.llm_service = llm_service
-        self.tool_registry = tool_registry
-        self.prompt_manager = prompt_manager
-        self._max_retries = 2
-        self._supported_actions = {
-            "explain", "refactor", "debug", "generate", "optimize", 
-            "translate", "document", "test", "review"
-        }
+
 
 class CodeAssistModule:
     def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):

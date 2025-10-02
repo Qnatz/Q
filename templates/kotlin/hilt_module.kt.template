@@ -1,0 +1,203 @@
+package {{package_name}}.di
+
+import android.content.Context
+import androidx.room.Room
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import timber.log.Timber
+import java.util.concurrent.TimeUnit
+import javax.inject.Singleton
+import {{package_name}}.BuildConfig
+import {{package_name}}.data.local.AppDatabase
+import {{package_name}}.data.local.DatabaseCallback
+import {{package_name}}.data.local.DatabaseMigrations
+import {{package_name}}.data.local.dao.{{entity_name}}Dao
+import {{package_name}}.data.remote.api.{{entity_name}}Api
+import {{package_name}}.data.remote.interceptor.AuthInterceptor
+import {{package_name}}.data.remote.interceptor.ErrorInterceptor
+import {{package_name}}.data.repository.{{entity_name}}RepositoryImpl
+import {{package_name}}.domain.repository.{{entity_name}}Repository
+import {{package_name}}.util.NetworkMonitor
+import {{package_name}}.util.NetworkMonitorImpl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+
+/**
+ * Hilt Module for Application-level dependencies
+ * 
+ * @InstallIn(SingletonComponent::class) - Dependencies live as long as the application
+ * 
+ * Provides:
+ * - Database instances
+ * - Network clients (Retrofit, OkHttp)
+ * - Repository implementations
+ * - Utility classes
+ */
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+
+    /**
+     * Provide Room Database
+     * 
+     * Configuration:
+     * - Singleton instance
+     * - Migration strategy
+     * - Callback for initialization
+     * - Fallback to destructive migration in debug (use carefully!)
+     */
+    @Provides
+    @Singleton
+    fun provideAppDatabase(
+        @ApplicationContext context: Context,
+        callback: DatabaseCallback
+    ): AppDatabase {
+        val builder = Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            AppDatabase.DATABASE_NAME
+        )
+            .addCallback(callback)
+            .addMigrations(*DatabaseMigrations.getAllMigrations())
+
+        // Only for debugging - removes database on schema change
+        if (BuildConfig.DEBUG) {
+            builder.fallbackToDestructiveMigration()
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Provide Database Callback
+     */
+    @Provides
+    @Singleton
+    fun provideDatabaseCallback(
+        @ApplicationScope scope: CoroutineScope
+    ): DatabaseCallback {
+        return DatabaseCallback(scope)
+    }
+
+    /**
+     * Provide Application CoroutineScope
+     * Lives as long as the application
+     */
+    @ApplicationScope
+    @Provides
+    @Singleton
+    fun provideApplicationScope(): CoroutineScope {
+        return CoroutineScope(SupervisorJob())
+    }
+
+    /**
+     * Provide {{entity_name}} DAO
+     */
+    @Provides
+    @Singleton
+    fun provide{{entity_name}}Dao(database: AppDatabase): {{entity_name}}Dao {
+        return database.{{entity_name.lower()}}Dao()
+    }
+
+    /**
+     * Provide OkHttpClient
+     * 
+     * Configuration:
+     * - Connection timeout
+     * - Read/Write timeouts
+     * - Logging interceptor (debug only)
+     * - Authentication interceptor
+     * - Error handling interceptor
+     */
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(
+        authInterceptor: AuthInterceptor,
+        errorInterceptor: ErrorInterceptor
+    ): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor(authInterceptor)
+            .addInterceptor(errorInterceptor)
+
+        // Add logging in debug mode
+        if (BuildConfig.DEBUG) {
+            val loggingInterceptor = HttpLoggingInterceptor { message ->
+                Timber.tag("OkHttp").d(message)
+            }.apply {
+                level = HttpLoggingInterceptor.Level.BODY
+            }
+            builder.addInterceptor(loggingInterceptor)
+        }
+
+        return builder.build()
+    }
+
+    /**
+     * Provide Retrofit instance
+     * 
+     * Configuration:
+     * - Base URL from BuildConfig
+     * - Gson converter for JSON
+     * - Custom OkHttpClient
+     */
+    @Provides
+    @Singleton
+    fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .baseUrl(BuildConfig.API_BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    /**
+     * Provide {{entity_name}} API
+     */
+    @Provides
+    @Singleton
+    fun provide{{entity_name}}Api(retrofit: Retrofit): {{entity_name}}Api {
+        return retrofit.create({{entity_name}}Api::class.java)
+    }
+
+    /**
+     * Provide Network Monitor
+     */
+    @Provides
+    @Singleton
+    fun provideNetworkMonitor(
+        @ApplicationContext context: Context
+    ): NetworkMonitor {
+        return NetworkMonitorImpl(context)
+    }
+
+    /**
+     * Provide {{entity_name}} Repository
+     * Binds implementation to interface
+     */
+    @Provides
+    @Singleton
+    fun provide{{entity_name}}Repository(
+        {{entity_name.lower()}}Dao: {{entity_name}}Dao,
+        {{entity_name.lower()}}Api: {{entity_name}}Api,
+        networkMonitor: NetworkMonitor
+    ): {{entity_name}}Repository {
+        return {{entity_name}}RepositoryImpl({{entity_name.lower()}}Dao, {{entity_name.lower()}}Api, networkMonitor)
+    }
+}
+
+/**
+ * Custom qualifier for Application CoroutineScope
+ */
+@Retention(AnnotationRetention.RUNTIME)
+@Qualifier
+annotation class ApplicationScope

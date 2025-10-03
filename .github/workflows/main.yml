@@ -1,0 +1,3 @@
+steps:
+  - name: Unzip to root folder
+    run: unzip Q.zip -d ./

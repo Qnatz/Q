@@ -58,6 +58,10 @@ class FileOperationTool(BaseTool):
             resolved_path = path.resolve()
             resolved_base = base_path.resolve()
             
+            # Allow paths in /tmp
+            if str(resolved_path).startswith('/tmp'):
+                return True
+
             # Check if the resolved path is within the base path
             return str(resolved_path).startswith(str(resolved_base))
         except Exception:
@@ -81,6 +85,20 @@ class FileOperationTool(BaseTool):
             }
         except Exception as e:
             return {"name": path.name, "path": str(path), "error": str(e)}
+    
+    def _resolve_project_path(self, path: str, context: Optional[Dict[str, Any]] = None) -> Path:
+        """Resolve project-relative paths safely"""
+        # If it's already an absolute path, use as-is
+        if path.startswith('/'):
+            return Path(path)
+        
+        # Try to resolve relative to project directory
+        if context and 'project_id' in context:
+            project_dir = f"/root/Q/projects/{context['project_id']}"
+            return Path(project_dir) / path
+        
+        # Fallback to current working directory
+        return Path.cwd() / path
     
     def _safe_read_file(self, path: Path, encoding: str, max_size: int) -> str:
         """Safely read file with size limits"""
@@ -115,7 +133,10 @@ class FileOperationTool(BaseTool):
                 )
             
             operation = parameters["operation"]
-            path = Path(parameters["path"])
+            raw_path = parameters["path"]
+            
+            # Use safe path resolution
+            path = self._resolve_project_path(raw_path, context)
             encoding = parameters.get("encoding", "utf-8")
             create_parents = parameters.get("create_parents", True)
             overwrite = parameters.get("overwrite", False)

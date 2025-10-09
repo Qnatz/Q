@@ -3,6 +3,8 @@ import re
 import logging
 from typing import Dict, Any, List, Optional
 
+import time
+
 from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager
 from schemas.plan_schema import PLAN_SCHEMA
@@ -44,6 +46,30 @@ class PlanningModule:
         self.project_context = project_context
         self._max_retries = 3
 
+    def _generate_project_title(self, idea: str) -> str:
+        """Generates a creative and descriptive project name with a timestamp."""
+        try:
+            prompt = f"Generate a short, creative, and descriptive project name (2-3 words, snake_case) for the following idea. Examples: 'android_app', 'finance_tracker', 'galaxy_explorer'.\n\nIdea: \"{idea}\"\n\nName:"
+            system_instruction = "You are a creative naming expert. Provide only the name."
+            
+            name_suggestion = self.llm_service.llm.generate(
+                [{"role": "system", "content": system_instruction}, {"role": "user", "content": prompt}],
+                use_tools=False
+            ).strip().lower().replace(" ", "_").replace("-", "_")
+            
+            # Basic validation
+            if not re.match(r"^[a-z0-9_]+$", name_suggestion) or len(name_suggestion) > 50:
+                 # Fallback to simpler logic if LLM fails or gives bad output
+                 name_suggestion = "_".join(idea.split()[:3]).lower()
+
+        except Exception as e:
+            self.logger.error(f"Error generating project title with LLM: {e}")
+            # Fallback to simpler logic
+            name_suggestion = "_".join(idea.split()[:3]).lower()
+
+        timestamp = int(time.time())
+        return f"{name_suggestion}_{timestamp}"
+
     def _load_prompt(self, prompt_name: str) -> str:
         mapped_name = PROMPT_MAPPINGS.get(prompt_name, prompt_name)
         prompt_content = self.prompt_manager.get_prompt(mapped_name)
@@ -61,11 +87,14 @@ class PlanningModule:
 
     def generate_plan(
         self,
-        project_title: str,
         refined_prompt: str,
-        conversation_history: List[Dict[str, str]]
+        conversation_history: List[Dict[str, str]],
+        project_title: Optional[str] = None
     ) -> Dict[str, Any]:
         """Generate a detailed plan using project-specific context."""
+        if not project_title:
+            project_title = self._generate_project_title(refined_prompt)
+
         logger.info(f"Generating plan for project {project_title} with request: {refined_prompt[:100]}...")
 
         # Stepwise planning

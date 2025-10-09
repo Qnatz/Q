@@ -3,11 +3,43 @@ import json
 import re
 from typing import List, Tuple, Dict, Optional, Any
 from abc import ABC, abstractmethod
+import time
+import requests
+from functools import wraps
 
 # Assuming these classes exist in the project environment
 # from memory.prompt_manager import PromptManager 
 # from qllm.unified_llm import UnifiedLLM
 # from utils.ui_helpers import say_error
+
+def retry_with_backoff(max_retries=5, base_delay=1, factor=2):
+    """
+    Retry decorator with exponential backoff.
+    - max_retries: number of retries before giving up
+    - base_delay: initial wait time (seconds)
+    - factor: multiplier for exponential growth
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = base_delay
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 429:
+                        # Extract retry delay if the API sends one
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            delay = float(retry_after)
+                        print(f"⚠️ Rate limit hit. Retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= factor
+                    else:
+                        raise
+            raise RuntimeError("Max retries exceeded due to rate limiting.")
+        return wrapper
+    return decorator
 
 # Placeholder for external dependencies to make the code runnable and professional
 class UnifiedLLM:
@@ -278,14 +310,37 @@ class LLMService:
         
         return 'python'  # Default fallback
 
+    @retry_with_backoff()
     def generate(self, messages: List[Dict], use_tools: bool = False) -> str:
         """Generic text generation method, wrapping the underlying LLM."""
         try:
             response = self.llm.generate(messages, use_tools=use_tools)
+            
+            # Check if UnifiedLLM returned an error dictionary for rate limiting
+            if isinstance(response, str):
+                try:
+                    response_json = json.loads(response)
+                    if isinstance(response_json, dict) and "error" in response_json:
+                        error_message = response_json["error"].lower()
+                        if "429" in error_message or "quota exceeded" in error_message:
+                            # Re-raise as HTTPError so retry_with_backoff can catch it
+                            mock_response = requests.Response()
+                            mock_response.status_code = 429
+                            mock_response.reason = "Too Many Requests"
+                            raise requests.exceptions.HTTPError(error_message, response=mock_response)
+                except json.JSONDecodeError:
+                    pass # Not a JSON error, proceed normally
+            
             return self._extract_summary_text(response).strip()
+        except requests.exceptions.HTTPError as e:
+            # Re-raise HTTPError so retry_with_backoff can handle it
+            raise e
+        except RuntimeError as e: # Catch RuntimeError from retry_with_backoff
+            say_error(f"LLM generation failed after retries: {e}")
+            return json.dumps({"error": f"LLM generation failed after retries: {e}"})
         except Exception as e:
             say_error(f"LLM generation failed: {e}")
-            return ""
+            return json.dumps({"error": f"LLM generation failed: {e}"})
 
     def _build_prompt(self, prompt: str, language: str, system_message: Optional[str] = None) -> List[Dict]:
         """Build a comprehensive prompt with a system message and user message."""
@@ -552,40 +607,92 @@ Please provide a complete solution with explanations of key design decisions.
         
         return solutions
 
-        def review_code(self, code: str, language: Optional[str] = None) -> str:
-            """Provide expert code review with suggestions for improvement."""
-            if language is None:
-                language = self._detect_language(code)
-            
-            system_message = f"""You are an expert {language.upper()} code reviewer. 
-            Analyze the provided code and provide:
-            1. Code quality assessment
-            2. Best practices compliance
-            3. Security considerations
-            4. Performance optimization suggestions
-            5. Refactoring recommendations
-            6. Testing suggestions
-            
-            Be constructive and specific in your feedback."""
-            
-            review_prompt = f"""Please review this {language} code:
+    def review_code(self, code: str, language: Optional[str] = None) -> str:
+        """Provide expert code review with suggestions for improvement."""
+        if language is None:
+            language = self._detect_language(code)
+        
+        system_message = f"""You are an expert {language.upper()} code reviewer. 
+        Analyze the provided code and provide:
+        1. Code quality assessment
+        2. Best practices compliance
+        3. Security considerations
+        4. Performance optimization suggestions
+        5. Refactoring recommendations
+        6. Testing suggestions
+        
+        Be constructive and specific in your feedback.
+
+        Return your response in JSON format with the following schema:
+        {{
+            "rating": <1-10>,
+            "strengths": ["strength 1", "strength 2", ...],
+            "improvements": ["improvement 1", "improvement 2", ...],
+            "feedback": "summary of the review"
+        }}
+        """
+        
+        review_prompt = f"""Please review this {language} code:
     
     ```{language}
     {code}
     
     Provide detailed feedback on improvements, best practices, and potential issues."""
-            messages = [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": review_prompt},
-            ]
-            
-            try:
-                response = self.llm.generate(messages, use_tools=False)
-                return self._extract_summary_text(response).strip()
-            except Exception as e:
-                say_error(f"Code review failed: {e}")
-                return "Code review failed due to an error."
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": review_prompt},
+        ]
+        
+        try:
+            response = self.llm.generate(messages, use_tools=False)
+            return self._extract_summary_text(response).strip()
+        except Exception as e:
+            say_error(f"Code review failed: {e}")
+            return "Code review failed due to an error."
 
+    def qa_code(self, code: str, language: Optional[str] = None) -> str:
+        """Provide expert code QA with suggestions for improvement."""
+        if language is None:
+            language = self._detect_language(code)
+        
+        system_message = f"""You are an expert {language.upper()} QA engineer. 
+        Analyze the provided code and provide:
+        1. Code quality assessment
+        2. Best practices compliance
+        3. Security considerations
+        4. Performance optimization suggestions
+        5. Refactoring recommendations
+        6. Testing suggestions
+        
+        Be constructive and specific in your feedback.
+        
+        Return your response in JSON format with the following schema:
+        {{
+            "status": "PASS" | "FAIL",
+            "issues": ["issue 1", "issue 2", ...],
+            "feedback": "summary of the review"
+        }}
+        """
+        
+        qa_prompt = f"""Please review this {language} code:
+    
+    ```{language}
+    {code}
+    
+    Provide detailed feedback on improvements, best practices, and potential issues."""
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": qa_prompt},
+        ]
+        
+        try:
+            response = self.llm.generate(messages, use_tools=False)
+            return self._extract_summary_text(response).strip()
+        except Exception as e:
+            say_error(f"Code QA failed: {e}")
+            return "Code QA failed due to an error."
+
+    @retry_with_backoff()
     def generate_with_plan(
         self,
         prompt: any,
@@ -597,12 +704,39 @@ Please provide a complete solution with explanations of key design decisions.
         Generates content with a plan, potentially in chunks.
         For now, this will just call the main generate method.
         """
-        return self.llm.generate_with_plan(
-            prompt,
-            system_instruction=system_instruction,
-            chunk_size=chunk_size,
-            step_size=step_size,
-        )
+        try:
+            response = self.llm.generate_with_plan(
+                prompt,
+                system_instruction=system_instruction,
+                chunk_size=chunk_size,
+                step_size=step_size,
+            )
+
+            # Check if UnifiedLLM returned an error dictionary for rate limiting
+            if isinstance(response, str):
+                try:
+                    response_json = json.loads(response)
+                    if isinstance(response_json, dict) and "error" in response_json:
+                        error_message = response_json["error"].lower()
+                        if "429" in error_message or "quota exceeded" in error_message:
+                            # Re-raise as HTTPError so retry_with_backoff can catch it
+                            mock_response = requests.Response()
+                            mock_response.status_code = 429
+                            mock_response.reason = "Too Many Requests"
+                            raise requests.exceptions.HTTPError(error_message, response=mock_response)
+                except json.JSONDecodeError:
+                    pass # Not a JSON error, proceed normally
+            
+            return response
+        except requests.exceptions.HTTPError as e:
+            # Re-raise HTTPError so retry_with_backoff can handle it
+            raise e
+        except RuntimeError as e: # Catch RuntimeError from retry_with_backoff
+            say_error(f"LLM generation with plan failed after retries: {e}")
+            return json.dumps({"error": f"LLM generation with plan failed after retries: {e}"})
+        except Exception as e:
+            say_error(f"LLM generation with plan failed: {e}")
+            return json.dumps({"error": f"LLM generation with plan failed: {e}"})
 
     def explain_code(self, code: str, language: Optional[str] = None) -> str:
         """Provide detailed explanation of code functionality."""

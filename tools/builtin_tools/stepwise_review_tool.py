@@ -9,8 +9,11 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 
-from pydantic.dataclasses import PrivateAttr
+from pydantic import Field
+from pydantic.dataclasses import dataclass, PrivateAttr
 from tools.base_tool_classes import BaseTool, ToolSchema, ToolResult, ToolExecutionStatus, ToolType
+from core.llm_service import LLMService
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ def safe_json_parse(text: str, fallback_value: Any = None) -> Any:
                 # Fix unescaped backslashes
                 fixed_json = json_str.replace('\\', '\\\\')
                 # Fix unescaped quotes in strings
-                fixed_json = re.sub(r'(?<!\\)"(?=[^,}\]]*[,}\]])', '\\"', fixed_json)
+                fixed_json = re.sub(r'(?<!\\)"(?=[^,}}\]]*[,}}\]])', '\\"', fixed_json)
                 return json.loads(fixed_json)
             except json.JSONDecodeError:
                 pass
@@ -72,7 +75,7 @@ def create_safe_prompt_template(base_prompt: str, context: str = "",
 
 IMPORTANT: Your response must be valid JSON. Follow these rules:
 1. Always escape backslashes as \\\\ 
-2. Always escape quotes in strings as \\"
+2. Always escape quotes in strings as \""
 3. Use double quotes for all string keys and values
 4. Do not include any text outside the JSON object
 5. Ensure all braces and brackets are properly closed
@@ -87,11 +90,11 @@ Your response:"""
 class StepwiseReviewTool(BaseTool):
     name: str = "Stepwise Review Tool"
     description: str = "Performs code review on implemented files."
-    _llm: Any = PrivateAttr()
 
-    def __init__(self, llm: Any, **kwargs: Any):
+    def __init__(self, llm_service: Any, tool_registry: Any, **kwargs: Any):
         super().__init__(**kwargs)
-        self._llm = llm
+        self.llm_service = llm_service
+        self.tool_registry = tool_registry
 
     def _define_schema(self) -> ToolSchema:
         return ToolSchema(
@@ -135,29 +138,26 @@ class StepwiseReviewTool(BaseTool):
 
             for fpath in implemented_files:
                 try:
-                    # Read the actual file content
-                    file_content_result = self._llm.tool_impls['read_file'](absolute_path=fpath)
-                    if file_content_result and "content" in file_content_result:
-                        file_content = file_content_result['content']
+                    file_content_result = self.tool_registry.execute_tool(
+                        'file_operation',
+                        parameters={
+                            'operation': 'read', 
+                            'path': fpath
+                        },
+                        context=context # Pass the context
+                    )
+                    
+                    # FIX: Handle ToolResult properly
+                    if (file_content_result and 
+                        file_content_result.status == ToolExecutionStatus.SUCCESS and 
+                        file_content_result.result and 
+                        'content' in file_content_result.result):
+                        file_content = file_content_result.result['content']
                     else:
                         logger.warning(f"Could not read content for file: {fpath}. Using placeholder.")
                         file_content = f"Content of {fpath} (could not read actual content)"
                     
-                    prompt = create_safe_prompt_template(
-                        f"Review file: {fpath}",
-                        f"File Content:\n{file_content}",
-                        'Return JSON with format: {"rating": 1-10, "strengths": [...], "improvements": [...], "feedback": "..."}'
-                    )
-                    
-                    if system_instruction:
-                        prompt = f"System Instruction: {system_instruction}\n\n{prompt}"
-
-                    llm_review_feedback = self._llm.generate_with_plan(
-                        prompt,
-                        system_instruction=system_instruction,
-                        chunk_size=512,
-                        step_size=256
-                    )
+                    llm_review_feedback = self.llm_service.review_code(file_content)
                     
                     # Parse review response
                     review_result = safe_json_parse(llm_review_feedback, {

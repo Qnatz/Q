@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 import logging
 from core.llm_service import LLMService
 from memory.prompt_manager import PromptManager # Import PromptManager
@@ -78,7 +78,7 @@ Code begins below:
             lines.append("- No obvious issues detected by heuristics.")
         return "\n".join(lines)
 
-    def review(self, implemented_files: List[str]) -> str:
+    def review(self, implemented_files: List[str], project_id: Optional[str] = None) -> str:
         """
         Generates a code review report for the implemented files using StepwiseReviewTool.
 
@@ -86,9 +86,11 @@ Code begins below:
           Path to the generated review report.
         """
         if self.tool_registry:
+            context = {"project_id": project_id} if project_id else {}
             result = self.tool_registry.execute_tool(
                 "stepwise_review",
-                {"implemented_files": implemented_files}
+                {"implemented_files": implemented_files},
+                context=context
             )
             if result.status == ToolExecutionStatus.SUCCESS:
                 return result.result

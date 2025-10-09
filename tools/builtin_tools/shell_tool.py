@@ -267,42 +267,28 @@ class ShellTool(BaseTool):
             shell_cmd = shell_config.get(shell_type, ['/bin/bash', '-c'])
             full_command = shell_cmd + [command]
             
-            # Execute command
+            # Execute command - FIXED VERSION
             try:
-                process = subprocess.Popen(
+                # Use simple subprocess.run for better reliability
+                process = subprocess.run(
                     full_command,
                     cwd=str(work_path),
                     env=env,
-                    stdout=subprocess.PIPE if capture_output else None,
-                    stderr=subprocess.PIPE if capture_output else None,
+                    capture_output=capture_output,
                     text=True,
-                    shell=True, # Add this line
-                    preexec_fn=os.setsid if os.name != 'nt' else None  # Create process group on Unix
+                    timeout=timeout,
+                    shell=False  # Don't use shell=True for security
                 )
                 
-                stdout, stderr = process.communicate(timeout=timeout)
+                stdout = process.stdout if capture_output else ""
+                stderr = process.stderr if capture_output else ""
                 return_code = process.returncode
                 timed_out = False
                 
-                # Truncate output if too large
-                if stdout and len(stdout) > max_output_size:
-                    stdout = stdout[:max_output_size] + "\n[OUTPUT TRUNCATED]"
-                if stderr and len(stderr) > max_output_size:
-                    stderr = stderr[:max_output_size] + "\n[ERROR OUTPUT TRUNCATED]"
-                
             except subprocess.TimeoutExpired:
-                try:
-                    # Kill the entire process group
-                    if os.name != 'nt':
-                        os.killpg(os.getpgid(process.pid), 9)
-                    else:
-                        process.kill()
-                except:
-                    pass
-                
-                stdout, stderr = process.communicate()
                 return_code = -1
                 timed_out = True
+                stdout, stderr = "", "Command timed out"
             
             execution_time = time.time() - start_time
             

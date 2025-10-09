@@ -1,0 +1,55 @@
+# FlaskQuickstart-20231027T103000
+
+This is a simple Flask application demonstrating basic routing and templating.
+
+## Setup Instructions
+
+Follow these steps to set up and run the application locally.
+
+### 1. Create a Virtual Environment
+
+It's recommended to use a virtual environment to manage project dependencies.
+
+```bash
+python3 -m venv venv
+```
+
+### 2. Activate the Virtual Environment
+
+**On macOS/Linux:**
+
+```bash
+source venv/bin/activate
+```
+
+**On Windows:**
+
+```bash
+venv\Scripts\activate
+```
+
+### 3. Install Dependencies
+
+With the virtual environment activated, install the required packages using `pip`.
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run the Flask Application
+
+Ensure your virtual environment is active and then run the application.
+
+```bash
+flask run
+```
+
+The application should now be running and accessible at `http://127.0.0.1:5000/` (or a similar address displayed in your terminal).
+
+### 5. Deactivate the Virtual Environment
+
+When you're done working on the project, you can deactivate the virtual environment.
+
+```bash
+deactivate
+```

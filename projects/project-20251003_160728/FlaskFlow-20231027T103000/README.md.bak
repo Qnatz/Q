@@ -1,0 +1,43 @@
+# FlaskFlow-20231027T103000 Project Setup
+
+This document outlines the initial steps to set up the project directory and Python virtual environment.
+
+## 1. Create the Project Directory (if not already done)
+
+First, navigate to the parent directory where you wish to create `FlaskFlow-20231027T103000`, then execute the following commands:
+
+```bash
+mkdir FlaskFlow-20231027T103000
+cd FlaskFlow-20231027T103000
+```
+
+## 2. Set Up Python Virtual Environment
+
+From within the `FlaskFlow-20231027T103000` directory, create a virtual environment named `venv`:
+
+```bash
+python3 -m venv venv
+```
+
+*   **Note:** Depending on your system configuration, you might need to use `python` instead of `python3`.
+
+## 3. Activate the Virtual Environment
+
+After creating the `venv` directory, activate it using the appropriate command for your operating system:
+
+*   **On macOS/Linux:**
+    ```bash
+source venv/bin/activate
+    ```
+
+*   **On Windows (Command Prompt):**
+    ```cmd
+vend\Scripts\activate.bat
+    ```
+
+*   **On Windows (PowerShell):**
+    ```powershell
+.\venv\Scripts\Activate.ps1
+    ```
+
+Once activated, your terminal prompt should typically change to include `(venv)` at the beginning, indicating that the virtual environment is active and isolated for this project.

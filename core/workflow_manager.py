@@ -1,11 +1,29 @@
 import logging
-from core.ui import agent_log, say_system, say_success, say_error
-from utils.json_utils import safe_json_extract
-from schemas.plan_schema import PLAN_SCHEMA
-from schemas.project_schema import ProjectMetadata
-from utils.validation_utils import validate
-import logging
+from typing import Optional
 from datetime import datetime
+
+from core.state_manager import StateManager
+from core.project_context import ProjectContext
+from core.llm_service import LLMService
+from core.agent_manager import AgentManager
+from core.response_handler import ResponseHandler
+
+from core.context_builder import ContextBuilder
+from core.git_service import GitService
+from core.template_service import DynamicTemplateService
+
+from core.ide_server import IDEServer
+from core.router import Router
+
+from agent_processes.ideation_module import IdeationModule
+from agent_processes.planning_module import PlanningModule
+from agent_processes.programming_module import ProgrammingModule
+from agent_processes.qa_module import QAModule
+from agent_processes.review_module import ReviewModule
+from agent_processes.research_module import ResearchModule
+from agent_processes.code_assist_module import CodeAssistModule
+from core.ui import agent_log
+from utils.ui_helpers import say_system, say_error, say_success
 
 logger = logging.getLogger(__name__)
 
@@ -28,126 +46,225 @@ class WorkflowManager:
         """
         project_title = response_dict.get("project_title", "Untitled Project")
         refined_prompt = response_dict.get("refined_prompt", "")
+        project_id = response_dict.get("project_id")
 
         say_system(f"🚀 Building: {project_title}")
-        
         agent_log("Orchestrator", f"Starting build for '{project_title}'...")
         
         try:
             # Get state and project-specific history
-            project_id = response_dict.get("project_id")
             state = self.state_manager.get_conversation_state("default_user", project_id)
             current_project_id = state.get("current_project_id")
-            project_history = self.state_manager.unified_memory.tinydb.get_conversation_history(
-                user_id="default_user",
-                project_id=current_project_id
-            )
+            
+            # Get project history safely
+            project_history = []
+            try:
+                if hasattr(self.state_manager.unified_memory, 'tinydb'):
+                    tinydb = self.state_manager.unified_memory.tinydb
+                    if hasattr(tinydb, 'get_conversation_history'):
+                        project_history = tinydb.get_conversation_history(
+                            user_id="default_user",
+                            project_id=current_project_id
+                        )
+            except Exception as e:
+                logger.warning(f"Could not retrieve project history: {e}")
 
             # Phase 1: Planning
+            agent_log("Planner", "Generating comprehensive plan...")
             plan = self.planner.generate_plan(project_title, refined_prompt, project_history)
-            if plan:
-                # Retrieve and update ProjectMetadata
-                if current_project_id:
-                    project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
-                    if project_metadata:
-                        project_metadata.plan = plan
-                        project_metadata.status = "planning_complete"
-                        project_metadata.completion_rate = 0.25 # 25% complete after planning
-                        project_metadata.last_updated = datetime.now().isoformat()
-                        self.state_manager.unified_memory.store_project_metadata(current_project_id, project_metadata)
-                        logger.info(f"Updated ProjectMetadata for {current_project_id} after planning.")
-
-                try:
-                    validate(plan, PLAN_SCHEMA)
-                except Exception as e:
-                    self.logger.warning(f"Plan failed schema validation but will be used as-is. Error: {e}")
+            
+            if not plan:
+                self.logger.warning("No plan generated, creating fallback plan")
+                say_error("Planning failed, using simplified approach")
+                plan = self._create_fallback_plan(project_title, refined_prompt)
             else:
-                self.logger.error(f"No plan generated, using fallback.")
-                # Create a simple fallback plan
-                plan = {
-                    "project": {
-                        "name": project_title,
-                        "description": refined_prompt
-                    },
-                    "files": [],
-                    "tasks": [
-                        {
-                            "task": "Implement based on user request",
-                            "description": f"Implement: {refined_prompt}",
-                            "module": "ProgrammingModule",
-                            "output": "Working implementation"
-                        }
-                    ]
-                }
+                # Validate plan
+                try:
+                    from schemas.plan_schema import PLAN_SCHEMA
+                    from utils.validation_utils import validate_plan
+                    validate_plan(plan)
+                    agent_log("Planner", "Plan validated successfully")
+                except Exception as e:
+                    self.logger.warning(f"Plan failed schema validation but will be used: {e}")
+            
+            # Update project metadata after planning
+            self._update_project_phase(
+                current_project_id, 
+                plan=plan,
+                status="planning_complete",
+                completion_rate=0.25
+            )
             agent_log("Planner", "Comprehensive plan generated successfully.")
 
             # Phase 2: Management Review
+            agent_log("Manager", "Reviewing plan...")
             approval = self.manager.review_plan(plan)
             if not approval.get("approved", False):
                 feedback = approval.get('feedback', 'No feedback provided')
                 say_error(f"Manager rejected plan: {feedback}. Aborting workflow.")
-                return
+                return None
             agent_log("Manager", "Plan approved and validated.")
 
             # Phase 3: Implementation
-            state = self.state_manager.get_conversation_state("default_user", project_id)
-            state["module_status"]["programmer"] = "running"
-            self.state_manager._update_conversation_state("default_user", state, project_id)
-
-            current_project_id = state.get("current_project_id")
-            if current_project_id:
-                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
-                if project_metadata:
-                    project_metadata.status = "programming"
-                    project_metadata.completion_rate = 0.50 # 50% complete during programming
-                    project_metadata.last_updated = datetime.now().isoformat()
-                    self.state_manager.unified_memory.store_project_metadata(current_project_id, project_metadata)
-                    logger.info(f"Updated ProjectMetadata for {current_project_id} to programming phase.")
+            agent_log("Programmer", "Starting implementation...")
+            self._update_module_status(state, project_id, "programmer", "running")
+            self._update_project_phase(
+                current_project_id,
+                status="programming",
+                completion_rate=0.50
+            )
 
             project_title_from_plan = plan.get("project", {}).get("name", project_title)
-            implemented_files_generator = self.programmer.implement(plan, project_title_from_plan, "default_user", project_id)
-            implemented_files = list(implemented_files_generator)
-            agent_log("Programmer", f"Successfully implemented {len(implemented_files)} files.")
+            implemented_files_generator = self.programmer.implement(
+                plan, 
+                project_title_from_plan, 
+                "default_user", 
+                project_id
+            )
+            
+            all_implemented_files = []
+            successful_tasks_count = 0
+            failed_tasks_count = 0
 
-            state["module_status"]["programmer"] = "idle"
-            self.state_manager._update_conversation_state("default_user", state, project_id)
+            for item in implemented_files_generator:
+                if item.get("type") == "task_complete":
+                    successful_tasks_count += 1
+                    if item.get("files"):
+                        all_implemented_files.extend(item["files"])
+                elif item.get("type") == "task_error":
+                    failed_tasks_count += 1
+                # You might want to log other types of items if they exist
+
+            self._update_module_status(state, project_id, "programmer", "idle")
+            
+            if failed_tasks_count == 0:
+                agent_log("Programmer", f"Successfully implemented {successful_tasks_count} tasks, creating {len(all_implemented_files)} files.")
+                workflow_status = "complete"
+            elif successful_tasks_count > 0:
+                agent_log("Programmer", f"Partially implemented {successful_tasks_count} tasks, with {failed_tasks_count} failures. Created {len(all_implemented_files)} files.")
+                workflow_status = "partial_success"
+            else:
+                agent_log("Programmer", f"Failed to implement any tasks. {failed_tasks_count} failures.")
+                workflow_status = "failed"
+
+            implemented_files = all_implemented_files # Update implemented_files for QA and Review
 
             # Phase 4: Quality Assurance
-            state = self.state_manager.get_conversation_state("default_user", project_id)
-            current_project_id = state.get("current_project_id")
-            if current_project_id:
-                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
-                if project_metadata:
-                    project_metadata.status = "qa"
-                    project_metadata.completion_rate = 0.75 # 75% complete during QA
-                    project_metadata.last_updated = datetime.now().isoformat()
-                    self.state_manager.unified_memory.store_project_metadata(current_project_id, project_metadata)
-                    logger.info(f"Updated ProjectMetadata for {current_project_id} to QA phase.")
-
-            qa_report_path = self.qa.test(implemented_files, plan=plan)
+            agent_log("QA", "Running quality assurance...")
+            self._update_project_phase(
+                current_project_id,
+                status="qa",
+                completion_rate=0.75
+            )
+            
+            qa_report_path = self.qa.test(implemented_files, plan=plan, project_id=current_project_id)
             agent_log("QA", f"Quality assurance completed: {qa_report_path}")
 
             # Phase 5: Code Review
-            state = self.state_manager.get_conversation_state("default_user", project_id)
-            current_project_id = state.get("current_project_id")
-            if current_project_id:
-                project_metadata = self.state_manager.unified_memory.get_project_metadata(current_project_id)
-                if project_metadata:
-                    project_metadata.status = "review"
-                    project_metadata.completion_rate = 0.90 # 90% complete during review
-                    project_metadata.last_updated = datetime.now().isoformat()
-                    self.state_manager.unified_memory.store_project_metadata(current_project_id, project_metadata)
-                    logger.info(f"Updated ProjectMetadata for {current_project_id} to review phase.")
-
-            review_report_path = self.reviewer.review(implemented_files)
+            agent_log("Reviewer", "Conducting code review...")
+            self._update_project_phase(
+                current_project_id,
+                status="review",
+                completion_rate=0.90
+            )
+            
+            review_report_path = self.reviewer.review(implemented_files, project_id=current_project_id)
             agent_log("Reviewer", f"Code review completed: {review_report_path}")
+
+            # Final: Mark as complete
+            self._update_project_phase(
+                current_project_id,
+                status="complete",
+                completion_rate=1.0
+            )
 
         except Exception as e:
             say_error(f"Workflow execution failed: {e}")
-            # Log the full error for debugging
             self.logger.error(f"Workflow error: {str(e)}", exc_info=True)
-            return
+            
+            # Update project status to failed
+            if current_project_id:
+                try:
+                    self._update_project_phase(
+                        current_project_id,
+                        status="failed",
+                        completion_rate=None
+                    )
+                except Exception as update_error:
+                    logger.error(f"Failed to update project status: {update_error}")
+            
+            return None
 
-        say_success(f"✅ {project_title} has been built successfully!")
+        if workflow_status == "complete":
+            say_success(f"✅ {project_title} has been built successfully!")
+        elif workflow_status == "partial_success":
+            say_system(f"⚠️ {project_title} built with some failures. Check logs for details.")
+        else:
+            say_error(f"❌ {project_title} build failed.")
+        
         say_system("📁 Project files can be found in the 'projects' directory.")
         return implemented_files
+
+    def _create_fallback_plan(self, project_title: str, refined_prompt: str) -> dict:
+        """Create a simple fallback plan when planning fails"""
+        return {
+            "project": {
+                "name": project_title,
+                "description": refined_prompt
+            },
+            "files": [],
+            "tasks": [
+                {
+                    "task": "Implement based on user request",
+                    "description": f"Implement: {refined_prompt}",
+                    "module": "ProgrammingModule",
+                    "output": "Working implementation"
+                }
+            ]
+        }
+
+    def _update_module_status(self, state, project_id, module_name: str, status: str):
+        """Update module status safely"""
+        try:
+            state.module_status[module_name] = status
+            self.state_manager.update_conversation_state("default_user", state, project_id)
+        except Exception as e:
+            logger.error(f"Failed to update module status: {e}")
+
+    def _update_project_phase(
+        self, 
+        project_id: Optional[str], 
+        plan: dict = None,
+        status: str = None, 
+        completion_rate: float = None
+    ):
+        """Update project metadata for current phase"""
+        if not project_id:
+            return
+        
+        try:
+            project_metadata = self.state_manager.unified_memory.get_project_metadata(project_id)
+            
+            if not project_metadata:
+                logger.warning(f"No metadata found for project {project_id}")
+                return
+            
+            # Update fields if provided
+            if plan is not None:
+                project_metadata['plan'] = plan
+            if status is not None:
+                project_metadata['status'] = status
+            if completion_rate is not None:
+                project_metadata['completion_rate'] = completion_rate
+            
+            project_metadata['last_updated'] = datetime.now().isoformat()
+            
+            # Store updated metadata
+            self.state_manager.unified_memory.store_project_metadata(
+                project_id, 
+                project_metadata
+            )
+            logger.info(f"Updated project {project_id} to phase: {status}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update project phase for {project_id}: {e}")

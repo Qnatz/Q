@@ -8,6 +8,8 @@ import logging
 import hashlib
 import json
 from typing import Dict, Any, Optional, List
+from urllib.parse import quote_plus, urlparse
+import os
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus, urljoin
 import requests
@@ -139,8 +141,12 @@ class WebSearchTool(BaseTool):
             # Process related topics
             for topic in data.get("RelatedTopics", [])[:max_results]:
                 if isinstance(topic, dict) and topic.get("Text"):
+                    path = urlparse(topic.get("FirstURL", "")).path
+                    title = os.path.basename(path).replace("_", " ") if path else ""
+                    if not title and path and path.endswith('/'):
+                        title = os.path.basename(path[:-1]).replace("_", " ")
                     results.append({
-                        "title": topic.get("FirstURL", "").split("/")[-1].replace("_", " "),
+                        "title": title,
                         "url": topic.get("FirstURL", ""),
                         "snippet": topic.get("Text", ""),
                         "source": "DuckDuckGo",

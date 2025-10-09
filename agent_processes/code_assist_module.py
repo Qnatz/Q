@@ -26,9 +26,12 @@ class CodeAssistResult:
 
 
 class CodeAssistModule:
-    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager):
+    def __init__(self, llm_service: LLMService, prompt_manager: PromptManager, tool_registry: ToolRegistry, memory: "UnifiedMemory"):
         self.llm_service = llm_service
         self.prompt_manager = prompt_manager
+        self.tool_registry = tool_registry
+        self.memory = memory
+        self._max_retries = 3
 
     def get_assistance(self, action_type: str, user_query: str, context: str) -> Dict[str, any]:
         """Get code assistance based on the action type."""
@@ -58,6 +61,15 @@ class CodeAssistModule:
         except Exception as e:
             return {"error": f"An unexpected error occurred: {e}"}
 
+    def _get_system_prompt(self, action_type: str) -> str:
+        """Get system prompt for the given action type."""
+        prompt_name = f"code_assist_{action_type}_prompt"
+        prompt = self.prompt_manager.get_prompt(prompt_name)
+        if not prompt:
+            logger.warning(f"Prompt '{prompt_name}' not found. Using fallback.")
+            return self._get_fallback_prompt(action_type)
+        return prompt
+
     def _get_fallback_prompt(self, action_type: str) -> str:
         """Fallback prompts when main prompts are unavailable"""
         base_prompt = f"""You are an expert code assistant specializing in {action_type}.
@@ -73,7 +85,7 @@ class CodeAssistModule:
         Format your response as JSON with:
         - \"action\": \"{action_type}\" 
         - \"explanation\": \"Clear explanation\"
-        - \"code_suggestions\": [{{\"language\": \"lang\", \"code\": \"snippet\", \"description\": \"desc\"}}]
+        - \"code_suggestions\": [{{"language": \"lang\", \"code\": \"snippet\", \"description\": \"desc\"}}]
         - \"next_steps\": [\"suggested actions\"]"""
         
         return base_prompt
@@ -109,13 +121,13 @@ class CodeAssistModule:
         executed_tools = []
         
         try:
-            if action_type == "refactor" and self.tool_registry.has_tool("code_refactor_tool"):
+            if action_type == "refactor" and "code_refactor_tool" in self.tool_registry.tools:
                 result = self.tool_registry.execute_tool("code_refactor_tool", context)
                 if result.status == ToolExecutionStatus.SUCCESS:
                     tool_results["refactored_code"] = result.result
                     executed_tools.append("code_refactor_tool")
             
-            elif action_type == "debug" and self.tool_registry.has_tool("code_debug_tool"):
+            elif action_type == "debug" and "code_debug_tool" in self.tool_registry.tools:
                 result = self.tool_registry.execute_tool("code_debug_tool", context)
                 if result.status == ToolExecutionStatus.SUCCESS:
                     tool_results["debug_analysis"] = result.result
@@ -142,6 +154,7 @@ class CodeAssistModule:
         
         # Get context from conversation state
         context = self._build_context(state, action_type)
+        conversation_context = self.memory.get_conversation_context(user_id=state.user_id, current_query=user_query, project_id=state.current_project_id)
         
         for attempt in range(self._max_retries):
             try:
@@ -150,7 +163,7 @@ class CodeAssistModule:
                 
                 # Generate LLM response with context
                 system_prompt = self._get_system_prompt(action_type)
-                messages = self._build_messages(system_prompt, user_query, context, tool_results)
+                messages = self._build_messages(system_prompt, user_query, context, tool_results, conversation_context)
                 
                 llm_response = self.llm_service.generate(messages, use_tools=False)
                 parsed_response = safe_json_extract(llm_response) or self._parse_text_response(llm_response)
@@ -173,6 +186,7 @@ class CodeAssistModule:
         
         action_type = self._detect_action_type(user_query)
         context = self._build_context(state, action_type)
+        conversation_context = self.memory.get_conversation_context(user_id=state.user_id, current_query=user_query, project_id=state.current_project_id)
         
         try:
             # Yield initial status
@@ -185,7 +199,7 @@ class CodeAssistModule:
             
             # Stream LLM response
             system_prompt = self._get_system_prompt(action_type)
-            messages = self._build_messages(system_prompt, user_query, context, tool_results)
+            messages = self._build_messages(system_prompt, user_query, context, tool_results, conversation_context)
             
             # Assuming llm_service supports streaming
             for chunk in self.llm_service.generate_stream(messages, use_tools=False):
@@ -217,12 +231,14 @@ class CodeAssistModule:
         return context
 
     def _build_messages(self, system_prompt: str, user_query: str, 
-                       context: Dict[str, Any], tool_results: Dict[str, Any]) -> List[Dict[str, str]]:
+                       context: Dict[str, Any], tool_results: Dict[str, Any], conversation_context: Dict[str, Any]) -> List[Dict[str, str]]:
         """Build messages for LLM"""
         messages = [{"role": "system", "content": system_prompt}]
         
         # Add context information
         context_str = f"Context: {json.dumps(context, indent=2)}" if context else ""
+        if conversation_context:
+            context_str += f"\nConversation Context: {json.dumps(conversation_context, indent=2)}"
         if tool_results.get("tool_results"):
             context_str += f"\nTool Results: {json.dumps(tool_results['tool_results'], indent=2)}"
         
@@ -236,7 +252,7 @@ class CodeAssistModule:
     def _parse_text_response(self, text_response: str) -> Dict[str, Any]:
         """Parse text response when JSON extraction fails"""
         # Try to extract code blocks and structure the response
-        code_blocks = re.findall(r'```(?:\[w+)?\n(.*?)```', text_response, re.DOTALL)
+        code_blocks = re.findall(r'```(?:[\w+])?\n(.*?)```', text_response, re.DOTALL)
         
         return {
             "action": "explain",  # Default action

@@ -1,7 +1,7 @@
 import json
 import logging
 from memory.prompt_manager import PromptManager
-from core.state_manager import ConversationState # Import ConversationState
+from core.state_manager import ConversationState
 
 logger = logging.getLogger(__name__)
 
@@ -46,43 +46,59 @@ class Router:
         # Return formatted string for prompt
         return "\n".join([self.routing_options_map.get(r, r) for r in available_routes])
 
-    def get_route(self, user_query: str, state: dict, ignore_ideation_status: bool = False) -> (str, str):
+    def get_route(self, user_query: str, state: dict, ignore_ideation_status: bool = False) -> tuple:
+        """
+        Determine the appropriate route for a user query.
+        
+        Returns:
+            tuple: (route_name, message) where route_name is the selected route
+                   and message is an explanation or context
+        """
         # Fallback-safe status fetch
         planner_status = state.get("module_status", {}).get("planner", "idle")
         programmer_status = state.get("module_status", {}).get("programmer", "idle")
         user_id = state.get("user_id", "default_user")
         request_source = state.get("request_source", "unknown")
 
-        # Try to build context safely
+        # Build context with proper error handling
+        recent_conversation = "none"
+        semantic_context = "none"
+        
         try:
             # Create a temporary state object if ignoring ideation status
             state_for_context = state
-            if ignore_ideation_status:
+            if ignore_ideation_status and isinstance(state, ConversationState):
                 temp_state_dict = state.to_dict()
                 temp_state_dict["is_in_ideation_session"] = False
                 state_for_context = ConversationState(**temp_state_dict)
 
             context = self.context_builder.build_conversation_context(state_for_context)
-            # context is a string here; also support dict fallbacks
+            
+            # Handle both string and dict context returns
             if isinstance(context, str):
                 recent_conversation = context
                 semantic_context = context
-            else:
+            elif isinstance(context, dict):
                 recent_conversation = context.get("recent_conversation", "none")
                 semantic_context = context.get("semantic_context", "none")
+            else:
+                logger.warning(f"Unexpected context type: {type(context)}")
+                
+        except AttributeError as e:
+            logger.warning(f"Context builder missing method: {e}. Using fallback.")
         except Exception as e:
-            logger.warning(f"ContextBuilder failed, using defaults: {e}")
-            recent_conversation = "none"
-            semantic_context = "none"
+            logger.warning(f"ContextBuilder failed: {e}. Using defaults.")
 
-        # Routing prompt
+        # Get routing prompt
         routing_prompt = self.prompt_manager.get_prompt("manager_routing_prompt")
         if not routing_prompt:
             logger.error("Routing prompt not found.")
-            return "error", "Routing prompt is missing."
+            return "no_op", "Routing prompt is missing."
 
         # Compute available routes
         available_routes = self._get_available_routes(planner_status, programmer_status)
+        if not available_routes:
+            available_routes = "no_op"
 
         # Fill the routing prompt with safe defaults
         try:
@@ -92,11 +108,12 @@ class Router:
                 conversation_history=recent_conversation,
                 semantic_context=semantic_context,
                 REQUEST_SOURCE=request_source,
-                ROUTING_OPTIONS=available_routes if available_routes else "none"
+                ROUTING_OPTIONS=available_routes
             )
         except KeyError as e:
             logger.error(f"Routing prompt missing placeholder: {e}")
-            formatted_prompt = routing_prompt  # fallback without formatting
+            # Use prompt without formatting as fallback
+            formatted_prompt = routing_prompt
 
         # Build messages for LLM
         messages = [
@@ -107,16 +124,25 @@ class Router:
         # Call the LLM and parse response safely
         try:
             llm_response = self.unified_llm.generate(messages, use_tools=False)
+            
+            # Try to parse JSON response
             try:
                 response_json = json.loads(llm_response)
                 route = response_json.get("route")
                 message = response_json.get("message")
+                
                 if route and message:
+                    logger.info(f"Router selected route: {route}")
                     return route, message
                 else:
+                    logger.warning(f"Invalid response structure: {response_json}")
                     return "no_op", "I could not determine a valid route. Please rephrase."
-            except json.JSONDecodeError:
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM response as JSON: {e}")
+                logger.debug(f"Raw LLM response: {llm_response}")
                 return "no_op", "Received invalid JSON from LLM."
+                
         except Exception as e:
-            logger.error(f"Unexpected error during routing: {e}")
+            logger.error(f"Unexpected error during routing: {e}", exc_info=True)
             return "no_op", "An unexpected error occurred during routing."

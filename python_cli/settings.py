@@ -7,9 +7,9 @@ import platform
 from pathlib import Path
 import dotenv
 
-# Constants from TypeScript
-SETTINGS_DIRECTORY_NAME = ".gemini"
-GEMINI_CONFIG_DIR = ".gemini"
+# Constants for Qai
+SETTINGS_DIRECTORY_NAME = ".qai"
+QAI_CONFIG_DIR = ".qai"
 
 USER_HOME_DIR = Path.home()
 USER_SETTINGS_DIR = USER_HOME_DIR / SETTINGS_DIRECTORY_NAME
@@ -31,11 +31,13 @@ class SummarizeToolOutputSettings:
 @dataclass
 class AccessibilitySettings:
     disableLoadingPhrases: Optional[bool] = None
+    highContrastMode: Optional[bool] = None
+    screenReaderSupport: Optional[bool] = None
 
 @dataclass
 class TelemetrySettings:
     enabled: Optional[bool] = None
-    target: Optional[str] = None  # 'local' or 'gcp'
+    target: Optional[str] = None  # 'local' or 'cloud'
     otlpEndpoint: Optional[str] = None
     logPrompts: Optional[bool] = None
     outfile: Optional[str] = None
@@ -48,21 +50,40 @@ class BugCommandSettings:
 @dataclass
 class FileFilteringSettings:
     respectGitIgnore: Optional[bool] = None
-    respectGeminiIgnore: Optional[bool] = None
+    respectQaiIgnore: Optional[bool] = None
     enableRecursiveFileSearch: Optional[bool] = None
 
 @dataclass
 class MCPServerConfig:
-    # Assuming basic structure, add more fields as needed from TS
     url: str
     extensionName: Optional[str] = None
 
 @dataclass
+class QaiModelSettings:
+    defaultModel: Optional[str] = None
+    temperature: Optional[float] = None
+    maxTokens: Optional[int] = None
+    contextWindow: Optional[int] = None
+
+@dataclass
+class UISettings:
+    compactMode: Optional[bool] = None
+    fontSize: Optional[int] = None
+    showSidebar: Optional[bool] = None
+    animationEnabled: Optional[bool] = None
+
+@dataclass
 class Settings:
+    # Core Qai settings
     theme: Optional[str] = None
-    customThemes: Dict[str, Any] = field(default_factory=dict) # Using Any for now
-    selectedAuthType: Optional[str] = None # AuthType enum equivalent
+    customThemes: Dict[str, Any] = field(default_factory=dict)
+    selectedAuthType: Optional[str] = None
     sandbox: Optional[bool] = None
+    
+    # Model configuration
+    model: Optional[QaiModelSettings] = None
+    
+    # Tools and extensions
     coreTools: Optional[List[str]] = None
     excludeTools: Optional[List[str]] = None
     toolDiscoveryCommand: Optional[str] = None
@@ -71,23 +92,28 @@ class Settings:
     mcpServers: Dict[str, MCPServerConfig] = field(default_factory=dict)
     allowMCPServers: Optional[List[str]] = None
     excludeMCPServers: Optional[List[str]] = None
+    
+    # UI/UX settings
     showMemoryUsage: Optional[bool] = None
     contextFileName: Optional[str] = None
     accessibility: Optional[AccessibilitySettings] = None
+    ui: Optional[UISettings] = None
+    preferredEditor: Optional[str] = None
+    hideWindowTitle: Optional[bool] = None
+    hideTips: Optional[bool] = None
+    hideBanner: Optional[bool] = None
+    vimMode: Optional[bool] = None
+    ideMode: Optional[bool] = None
+    
+    # Performance and behavior
     telemetry: Optional[TelemetrySettings] = None
     usageStatisticsEnabled: Optional[bool] = None
-    preferredEditor: Optional[str] = None
     bugCommand: Optional[BugCommandSettings] = None
     checkpointing: Optional[CheckpointingSettings] = None
     autoConfigureMaxOldSpaceSize: Optional[bool] = None
     fileFiltering: Optional[FileFilteringSettings] = None
-    hideWindowTitle: Optional[bool] = None
-    hideTips: Optional[bool] = None
-    hideBanner: Optional[bool] = None
     maxSessionTurns: Optional[int] = None
     summarizeToolOutput: Dict[str, SummarizeToolOutputSettings] = field(default_factory=dict)
-    vimMode: Optional[bool] = None
-    ideMode: Optional[bool] = None
     disableAutoUpdate: Optional[bool] = None
     memoryDiscoveryMaxDirs: Optional[int] = None
 
@@ -132,7 +158,7 @@ class LoadedSettings:
         # Apply user settings, overriding system
         for key, value in self.user.settings.__dict__.items():
             if value is not None:
-                if key in ['customThemes', 'mcpServers'] and isinstance(value, dict):
+                if key in ['customThemes', 'mcpServers', 'summarizeToolOutput'] and isinstance(value, dict):
                     current_val = getattr(merged_settings, key, {})
                     setattr(merged_settings, key, {**current_val, **value})
                 else:
@@ -141,7 +167,7 @@ class LoadedSettings:
         # Apply workspace settings, overriding user
         for key, value in self.workspace.settings.__dict__.items():
             if value is not None:
-                if key in ['customThemes', 'mcpServers'] and isinstance(value, dict):
+                if key in ['customThemes', 'mcpServers', 'summarizeToolOutput'] and isinstance(value, dict):
                     current_val = getattr(merged_settings, key, {})
                     setattr(merged_settings, key, {**current_val, **value})
                 else:
@@ -166,21 +192,18 @@ class LoadedSettings:
         save_settings(settings_file)
 
 def get_system_settings_path() -> Path:
-    if os.environ.get("GEMINI_CLI_SYSTEM_SETTINGS_PATH"):
-        return Path(os.environ["GEMINI_CLI_SYSTEM_SETTINGS_PATH"])
+    if os.environ.get("QAI_CLI_SYSTEM_SETTINGS_PATH"):
+        return Path(os.environ["QAI_CLI_SYSTEM_SETTINGS_PATH"])
 
     os_platform = platform.system()
     if os_platform == 'Darwin':  # macOS
-        return Path('/Library/Application Support/GeminiCli/settings.json')
+        return Path('/Library/Application Support/QaiCli/settings.json')
     elif os_platform == 'Windows':
-        return Path('C:\\ProgramData\\gemini-cli\\settings.json')
+        return Path('C:\\ProgramData\\qai-cli\\settings.json')
     else:  # Linux and others
-        return Path('/etc/gemini-cli/settings.json')
+        return Path('/etc/qai-cli/settings.json')
 
 def resolve_env_vars_in_string(value: str) -> str:
-    # Find $VAR_NAME or ${VAR_NAME}
-    # This regex is a simplified version of the TS one, might need adjustment
-    # to fully match all edge cases if they exist in the TS version.
     import re
     env_var_regex = re.compile(r'\$(?:(\w+)|{([^}]+)})')
     def replace_match(match):
@@ -209,10 +232,10 @@ def resolve_env_vars_in_object(obj: Any) -> Any:
 def find_env_file(start_dir: Path) -> Optional[Path]:
     current_dir = start_dir.resolve()
     while True:
-        # prefer gemini-specific .env under GEMINI_DIR
-        gemini_env_path = current_dir / GEMINI_CONFIG_DIR / ".env"
-        if gemini_env_path.exists():
-            return gemini_env_path
+        # prefer qai-specific .env under QAI_DIR
+        qai_env_path = current_dir / QAI_CONFIG_DIR / ".env"
+        if qai_env_path.exists():
+            return qai_env_path
         env_path = current_dir / ".env"
         if env_path.exists():
             return env_path
@@ -220,9 +243,9 @@ def find_env_file(start_dir: Path) -> Optional[Path]:
         parent_dir = current_dir.parent
         if parent_dir == current_dir:
             # check .env under home as fallback
-            home_gemini_env_path = USER_HOME_DIR / GEMINI_CONFIG_DIR / ".env"
-            if home_gemini_env_path.exists():
-                return home_gemini_env_path
+            home_qai_env_path = USER_HOME_DIR / QAI_CONFIG_DIR / ".env"
+            if home_qai_env_path.exists():
+                return home_qai_env_path
             home_env_path = USER_HOME_DIR / ".env"
             if home_env_path.exists():
                 return home_env_path
@@ -233,12 +256,12 @@ def set_up_cloud_shell_environment(env_filepath: Optional[Path]):
     if env_filepath and env_filepath.exists():
         env_content = env_filepath.read_text()
         parsed_env = dotenv.dotenv_values(stream=env_content)
-        if parsed_env.get("GOOGLE_CLOUD_PROJECT"):
-            os.environ["GOOGLE_CLOUD_PROJECT"] = parsed_env["GOOGLE_CLOUD_PROJECT"]
+        if parsed_env.get("QAI_CLOUD_PROJECT"):
+            os.environ["QAI_CLOUD_PROJECT"] = parsed_env["QAI_CLOUD_PROJECT"]
         else:
-            os.environ["GOOGLE_CLOUD_PROJECT"] = 'cloudshell-gca'
+            os.environ["QAI_CLOUD_PROJECT"] = 'qai-cloud'
     else:
-        os.environ["GOOGLE_CLOUD_PROJECT"] = 'cloudshell-gca'
+        os.environ["QAI_CLOUD_PROJECT"] = 'qai-cloud'
 
 def load_environment():
     env_filepath = find_env_file(Path.cwd())
@@ -261,8 +284,6 @@ def load_settings(workspace_dir: Path) -> LoadedSettings:
     try:
         if system_settings_path.exists():
             system_content = system_settings_path.read_text(encoding='utf-8')
-            # stripJsonComments equivalent: Python json.loads handles comments if they are not part of valid JSON
-            # For strict comment stripping, a pre-processing step would be needed.
             parsed_system_settings = json.loads(system_content)
             system_settings = Settings(**resolve_env_vars_in_object(parsed_system_settings))
     except Exception as e:
@@ -276,9 +297,9 @@ def load_settings(workspace_dir: Path) -> LoadedSettings:
             user_settings = Settings(**resolve_env_vars_in_object(parsed_user_settings))
             # Support legacy theme names
             if user_settings.theme == 'VS':
-                user_settings.theme = "DefaultLight" # Assuming DefaultLight.name
+                user_settings.theme = "DefaultLight"
             elif user_settings.theme == 'VS2015':
-                user_settings.theme = "DefaultDark" # Assuming DefaultDark.name
+                user_settings.theme = "DefaultDark"
     except Exception as e:
         settings_errors.append(SettingsError(message=str(e), path=str(USER_SETTINGS_PATH)))
 
@@ -314,7 +335,7 @@ def save_settings(settings_file: SettingsFile):
             # Convert dataclass to dict for JSON serialization
             settings_dict = settings_file.settings.__dict__
             # Handle nested dataclasses if any, by converting them to dicts
-            serializable_settings = json.loads(json.dumps(settings_dict, default=lambda o: o.__dict__))
+            serializable_settings = json.loads(json.dumps(settings_dict, default=lambda o: o.__dict__ if hasattr(o, '__dict__') else str(o)))
             json.dump(serializable_settings, f, indent=2)
     except Exception as e:
         print(f"Error saving settings file: {e}")

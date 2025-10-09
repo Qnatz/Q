@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDE Server GUI</title>
+</head>
+<body>
+    <h1>IDE Server GUI</h1>
+
+    <h2>Server Status</h2>
+    <p id="status">Unknown</p>
+
+    <h2>Send Context</h2>
+    <textarea id="context-input" rows="4" cols="50"></textarea>
+    <br>
+    <button id="send-button">Send Context</button>
+
+    <h2>Received Context</h2>
+    <pre id="received-context"></pre>
+
+    <script>
+        const statusElement = document.getElementById('status');
+        const contextInputElement = document.getElementById('context-input');
+        const sendButtonElement = document.getElementById('send-button');
+        const receivedContextElement = document.getElementById('received-context');
+
+        // Check server status
+        fetch('http://127.0.0.1:8001/')
+            .then(response => response.json())
+            .then(data => {
+                statusElement.textContent = data.message;
+            })
+            .catch(error => {
+                statusElement.textContent = 'Error connecting to server.';
+                console.error('Error:', error);
+            });
+
+        // Send context
+        sendButtonElement.addEventListener('click', () => {
+            const contextData = {
+                data: contextInputElement.value
+            };
+
+            fetch('http://127.0.0.1:8001/context', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(contextData),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Success:', data);
+                // Refresh received context
+                getContext();
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+            });
+        });
+
+        // Get context
+        function getContext() {
+            fetch('http://127.0.0.1:8001/context')
+                .then(response => response.json())
+                .then(data => {
+                    receivedContextElement.textContent = JSON.stringify(data, null, 2);
+                })
+                .catch(error => {
+                    receivedContextElement.textContent = 'Error fetching context.';
+                    console.error('Error:', error);
+                });
+        }
+
+        // Initial fetch of context
+        getContext();
+    </script>
+</body>
+</html>

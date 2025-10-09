@@ -1,0 +1,125 @@
+{
+  "metadata": {
+    "timestamp": "2025-10-03 16:26:10",
+    "report_version": "1.0",
+    "module": "QAModule"
+  },
+  "summary": {
+    "total_files": 11,
+    "passed": 11,
+    "failed": 0,
+    "missing": 0,
+    "overall_status": "success",
+    "execution_time": 0.037549
+  },
+  "compliance": {
+    "compliance_check": false,
+    "missing_files": [
+      "app.py",
+      "README.md",
+      "templates/index.html",
+      ".flaskenv",
+      "requirements.txt"
+    ],
+    "extra_files": [
+      "/root/Q/projects/project-20251003_162245/templates/index.html",
+      "/root/Q/projects/project-20251003_162245/app.py",
+      "/root/Q/projects/project-20251003_162245/requirements.txt",
+      "/root/Q/projects/project-20251003_162245/.flaskenv",
+      "/root/Q/projects/project-20251003_162245/setup_project.sh",
+      "/root/Q/projects/project-20251003_162245/README.md"
+    ],
+    "planned_file_count": 5,
+    "implemented_file_count": 6
+  },
+  "file_details": [
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/setup_project.sh",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 1499
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/requirements.txt",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 6
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/app.py",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 187
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/templates/index.html",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 369
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/.flaskenv",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 39
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/app.py",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 187
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/README.md",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 1713
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/app.py",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 187
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/templates/index.html",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 369
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/.flaskenv",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 39
+    },
+    {
+      "file_path": "/root/Q/projects/project-20251003_162245/requirements.txt",
+      "status": "passed",
+      "feedback": "File exists and is non-empty",
+      "exists": true,
+      "is_empty": false,
+      "file_size": 6
+    }
+  ]
+}

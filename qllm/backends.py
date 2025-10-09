@@ -263,6 +263,12 @@ class GeminiBackend:
 
             logger.debug(f"GeminiBackend.extract_text output: {text}")
             return text
+        except ValueError as e:
+            if "finish_reason" in str(e):
+                logger.warning(f"Could not extract text due to finish_reason: {e}")
+                return json.dumps({"error": f"Could not extract text from Gemini response: {e}"})
+            logger.exception("Error extracting text from Gemini response.")
+            return json.dumps({"error": "Error extracting text from Gemini response."})
         except Exception:
             logger.exception("Error extracting text from Gemini response.")
             return json.dumps({"error": "Error extracting text from Gemini response."})

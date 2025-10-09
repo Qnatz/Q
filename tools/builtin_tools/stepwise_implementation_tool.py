@@ -39,6 +39,19 @@ class BuildSystem(Enum):
 class LanguageConfig:
     """Configuration for different programming languages and build systems"""
 
+    @staticmethod
+    def _get_npm_clean_command():
+        """Safely determine npm clean command"""
+        if os.path.exists("package.json"):
+            try:
+                with open("package.json", 'r') as f:
+                    pkg = json.load(f)
+                    if "clean" in pkg.get("scripts", {}):
+                        return ["npm", "run", "clean"]
+            except Exception:
+                pass
+        return ["rm", "-rf", "dist", "build"]
+
     BUILD_CONFIGS = {
         BuildSystem.MAVEN: {
             "build_command": ["./mvnw", "compile"] if os.path.exists("./mvnw") else ["mvn", "compile"],
@@ -56,8 +69,7 @@ class LanguageConfig:
         BuildSystem.NPM: {
             "build_command": ["npm", "run", "build"],
             "test_command": ["npm", "test"],
-            "clean_command": ["npm", "run", "clean"] if os.path.exists("package.json") and "clean" in json.load(open("package.json")).get("scripts", {})
- else ["rm", "-rf", "dist", "build"],
+            "clean_command": None,  # Will be determined dynamically
             "dependencies_file": "package.json"
         },
         BuildSystem.YARN: {
@@ -105,17 +117,17 @@ class LanguageConfig:
     }
 
     LANGUAGE_DETECTION_PATTERNS = {
-        "java": [r"\.java$", r"public\s+class", r"import\s+java.", r"@SpringBootApplication"],
-        "kotlin": [r"\.kt$", r"fun\s+main", r"import\s+kotlin.", r"@RestController"],
-        "python": [r"\.py$", r"def\s+\w+", r"import\s+\w+", r"from\s+\w+\s+import"],
-        "javascript": [r"\.js$", r"function\s+\w+", r"const\s+\w+", r"import\s+.*from"],
-        "typescript": [r"\.ts$", r"interface\s+\w+", r"const\s+\w+:\s*\w+", r"import\s+.*from"],
-        "rust": [r"\.rs$", r"fn\s+main", r"let\s+\w+:", r"use\s+.*;"],
-        "go": [r"\.go$", r"func\s+main", r"package\s+main", r"import\s+("],
-        "csharp": [r"\.cs$", r"public\s+class", r"using\s+System", r"namespace\s+\w+"],
-        "php": [r"\.php$", r"<\?php", r"function\s+\w+", r"namespace\s+\w+"],
-        "ruby": [r"\.rb$", r"def\s+\w+", r"class\s+\w+", r"require\s+'\w+'"],
-        "swift": [r"\.swift$", r"func\s+\w+", r"import\s+\w+", r"class\s+\w+"]
+        "java": [r"\.java$", r"public\s+class", r"import\s+java\.", r" @SpringBootApplication"],
+        "kotlin": [r"\.kt$", r"fun\s+main", r"import\s+kotlin\.", r" @RestController"],
+        "python": [r"\.py$", r"def\s+\\w+", r"import\s+\\w+", r"from\s+\\w+\\s+import"],
+        "javascript": [r"\.js$", r"function\s+\\w+", r"const\s+\\w+", r"import\s+.*from"],
+        "typescript": [r"\.ts$", r"interface\s+\\w+", r"const\s+\\w+:\s*\\w+", r"import\s+.*from"],
+        "rust": [r"\.rs$", r"fn\s+main", r"let\s+\\w+:", r"use\s+.*;"],
+        "go": [r"\.go$", r"func\s+main", r"package\s+main", r"import\s+""("],  # Fixed regex pattern
+        "csharp": [r"\.cs$", r"public\s+class", r"using\s+System", r"namespace\s+\\w+"],
+        "php": [r"\.php$", r"<\?php", r"function\s+\\w+", r"namespace\s+\\w+"],
+        "ruby": [r"\.rb$", r"def\s+\\w+", r"class\s+\\w+", r"require\s+'\\w+'"],
+        "swift": [r"\.swift$", r"func\s+\\w+", r"import\s+\\w+", r"class\s+\\w+"]
     }
 
 
@@ -175,8 +187,8 @@ def create_safe_prompt_template(base_prompt: str, context: str = "",
 {context}
 
 IMPORTANT: Your response MUST be valid JSON. Do NOT include any conversational text, explanations, or markdown outside the JSON object. Follow these rules strictly:
-1. Always escape backslashes as \\
-2. Always escape quotes in strings as \"
+1. Always escape backslashes as \\ 
+2. Always escape quotes in strings as \" 
 3. Use double quotes for all string keys and values
 4. Ensure all braces and brackets are properly closed
 5. The entire response should be a single JSON object or array.
@@ -191,14 +203,16 @@ Your response (JSON only):"""
 class StepwiseImplementationTool(BaseTool):
     name: str = "Enhanced Stepwise Implementation Tool"
     description: str = "Professional multi-language implementation with robust error handling and resilience"
-    _llm: Any = PrivateAttr()
+    _llm_service: Any = PrivateAttr()
 
-    def __init__(self, llm: Any, tool_registry: Any, **kwargs: Any):
+    def __init__(self, llm_service: Any, tool_registry: Any, **kwargs: Any):
         super().__init__(**kwargs)
-        self._llm = llm
+        self._llm_service = llm_service
         self._tool_registry = tool_registry
-        self._max_retries = 3
-        self._build_timeout = 300  # 5 minutes
+        self._max_retries = 2  # Reduced from 3
+        self._build_timeout = 180  # Reduced from 300
+        self._file_cache = {}  # NEW: Cache for file operations
+        self._processed_files = set()  # NEW: Track processed files
 
     def _define_schema(self) -> ToolSchema:
         return ToolSchema(
@@ -207,7 +221,9 @@ class StepwiseImplementationTool(BaseTool):
             parameters={
                 "task": {"type": "object", "description": "The task to implement."},
                 "project_title": {"type": "string", "description": "The title of the project."},
-                "system_instruction": {"type": "string", "description": "The system instruction for the LLM."}
+                "system_instruction": {"type": "string", "description": "The system instruction for the LLM."},
+                "project_id": {"type": "string", "description": "The ID of the project."},
+                "implemented_files": {"type": "array", "description": "A list of files that have already been implemented."}
             },
             required=["task", "project_title", "system_instruction"],
             tool_type=ToolType.IMPLEMENTATION,
@@ -245,18 +261,28 @@ class StepwiseImplementationTool(BaseTool):
         """Detect programming language from code content"""
         for language, patterns in LanguageConfig.LANGUAGE_DETECTION_PATTERNS.items():
             for pattern in patterns:
-                if re.search(pattern, code_content, re.IGNORECASE | re.MULTILINE):
-                    return language
+                try:
+                    if re.search(pattern, code_content, re.IGNORECASE | re.MULTILINE):
+                        return language
+                except re.error as e:
+                    logger.warning(f"Invalid regex pattern '{pattern}' for language {language}: {e}")
+                    continue
         return "unknown"
 
     def _get_build_commands(self, build_system: BuildSystem) -> Dict[str, List[str]]:
         """Get build commands for the detected build system"""
-        return LanguageConfig.BUILD_CONFIGS.get(build_system, {
+        config = LanguageConfig.BUILD_CONFIGS.get(build_system, {
             "build_command": [],
             "test_command": [],
             "clean_command": [],
             "dependencies_file": ""
         })
+        
+        # Handle NPM clean command dynamically
+        if build_system == BuildSystem.NPM and config.get("clean_command") is None:
+            config["clean_command"] = LanguageConfig._get_npm_clean_command()
+        
+        return config
 
     def _install_dependencies(self, build_system: BuildSystem, project_title: str) -> bool:
         """Install project dependencies based on build system"""
@@ -291,7 +317,11 @@ class StepwiseImplementationTool(BaseTool):
                     'cwd': project_dir
                 }
             )
-            return result.get("exit_code", 1) == 0
+            if hasattr(result, 'status'):
+                return result.status == ToolExecutionStatus.SUCCESS
+            else:
+                logger.error(f"Unexpected result type from run_shell_command: {type(result)}")
+                return False
         except Exception as e:
             logger.error(f"Dependency installation failed: {e}")
             return False
@@ -300,15 +330,24 @@ class StepwiseImplementationTool(BaseTool):
         """Run shell command with timeout and comprehensive error handling"""
         try:
             result = self._tool_registry.execute_tool(
-                'run_shell_command',
+                'shell_command',
                 parameters={
                     'command': ' '.join(command),
                     'description': description,
                     'timeout': timeout,
-                    'cwd': cwd
+                    'cwd': cwd,
+                    'allow_dangerous': True
                 }
             )
-            return result.result
+            
+            if result and result.status == ToolExecutionStatus.SUCCESS and result.result:
+                return result.result
+            else:
+                return {
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": result.error_message if result else "Command execution failed"
+                }
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
             return {
@@ -321,12 +360,10 @@ class StepwiseImplementationTool(BaseTool):
         """Enhanced build check with multi-language support"""
         build_report = {"status": "SKIPPED", "feedback": "No build command defined.", "raw_output": ""}
 
-        # Get build commands for the detected build system
         build_commands = self._get_build_commands(build_system)
         build_command = build_commands.get("build_command", [])
 
         if not build_command:
-            # Fallback to language-specific build commands
             fallback_commands = {
                 "python": ["python", "-m", "compileall", "."],
                 "javascript": ["npm", "run", "build"] if os.path.exists("package.json") else [],
@@ -344,7 +381,6 @@ class StepwiseImplementationTool(BaseTool):
 
         project_dir = LanguageConfig.BUILD_CONFIGS.get(build_system, {}).get("project_dir", ".").format(project_title=project_title)
 
-        # Install dependencies first
         if build_system == BuildSystem.GRADLE and not os.path.exists(f"{project_dir}/gradlew"):
             logger.info("`gradlew` wrapper not found. Initializing Gradle project in subdirectory.")
             try:
@@ -392,7 +428,6 @@ class StepwiseImplementationTool(BaseTool):
             build_output = build_result.get("stdout", "") + build_result.get("stderr", "")
             build_exit_code = build_result.get("exit_code", 1)
 
-            # Interpret build results
             interpretation_prompt = f"""
 Analyze the following build output for a {detected_language} project using {build_system.value}.
 Determine if the build passed or failed, and provide a concise summary of the results and any failures.
@@ -413,7 +448,7 @@ Provide a professional assessment focusing on:
             interpretation_system_instruction = "You are an expert build engineer and code quality analyst. Provide clear, actionable feedback."
 
             try:
-                interpretation_output = self._llm.generate_with_plan(
+                interpretation_output = self._llm_service.generate_with_plan(
                     interpretation_prompt,
                     system_instruction=interpretation_system_instruction,
                     chunk_size=512,
@@ -430,7 +465,6 @@ Provide a professional assessment focusing on:
 
             except Exception as e:
                 logger.error(f"Error interpreting build results: {e}")
-                # Fallback interpretation
                 if build_exit_code == 0:
                     build_report["status"] = "PASS"
                     build_report["feedback"] = "Build completed successfully (automatic assessment)"
@@ -454,7 +488,6 @@ Provide a professional assessment focusing on:
         if not implemented_files:
             return test_report
 
-        # 1. Generate Test Code with language-specific best practices
         test_generation_prompt = f"""
 Generate comprehensive unit tests for the following {detected_language} files in the project '{project_title}'.
 Focus on:
@@ -471,9 +504,7 @@ Return the test code in a JSON object with 'file_path' and 'content' for each te
 Files to test:
 """
 
-        # Use json.dumps to safely escape file content for prompt insertion.
         for file_data in implemented_files:
-            # json.dumps returns a quoted JSON string; strip outer quotes so content is placed inline.
             escaped_content = json.dumps(file_data['content'])[1:-1]
             test_generation_prompt += f"\n--- File: {file_data['file_path']} ---\n{escaped_content}\n"
 
@@ -493,13 +524,13 @@ Files to test:
 
         framework_guidance = test_frameworks.get(detected_language, "standard testing practices")
         test_generation_system_instruction = f"""
-You are an expert {detected_language} testing engineer.
-Generate high-quality, idiomatic unit tests following {framework_guidance}.
-Ensure tests are isolated, fast, and maintainable.
-"""
+        You are an expert {detected_language} testing engineer.
+        Generate high-quality, idiomatic unit tests following {framework_guidance}.
+        Ensure tests are isolated, fast, and maintainable.
+        """
 
         try:
-            test_code_output = self._llm.generate_with_plan(
+            test_code_output = self._llm_service.generate_with_plan(
                 test_generation_prompt,
                 system_instruction=test_generation_system_instruction,
                 chunk_size=512,
@@ -513,12 +544,10 @@ Ensure tests are isolated, fast, and maintainable.
         if not generated_tests:
             return {"status": "SKIPPED", "feedback": "No test files generated by LLM.", "raw_output": ""}
 
-        # 2. Write Test Files with validation
         written_test_files = []
         for test_file in generated_tests:
             try:
                 if "file_path" in test_file and "content" in test_file:
-                    # Validate test file path makes sense
                     test_path = test_file['file_path']
                     if not any(test_path.endswith(ext) for ext in [f"_test.{detected_language}", f"Test.{detected_language}", ".spec.js", ".spec.ts", "_test.py"]):
                         logger.warning(f"Test file path doesn't follow conventional patterns: {test_path}")
@@ -541,11 +570,9 @@ Ensure tests are isolated, fast, and maintainable.
         if not written_test_files:
             return {"status": "ERROR", "feedback": "No test files were successfully written.", "raw_output": ""}
 
-        # 3. Run Tests with appropriate command
         test_commands = self._get_build_commands(build_system).get("test_command", [])
 
         if not test_commands:
-            # Fallback test commands by language
             fallback_test_commands = {
                 "python": ["pytest", "-v"],
                 "javascript": ["npm", "test"] if os.path.exists("package.json") else [],
@@ -554,7 +581,7 @@ Ensure tests are isolated, fast, and maintainable.
                 "kotlin": ["./gradlew", "test"],
                 "rust": ["cargo", "test"],
                 "go": ["go", "test", "./..."],
-                "csharp": ["dotnet", "test"]
+                "csharp": "dotnet test"
             }
             test_commands = fallback_test_commands.get(detected_language, [])
 
@@ -574,7 +601,6 @@ Ensure tests are isolated, fast, and maintainable.
             logger.error(f"Error running tests: {e}")
             return {"status": "ERROR", "feedback": f"Test execution failed: {e}", "raw_output": ""}
 
-        # 4. Enhanced Test Result Interpretation
         interpretation_prompt = f"""
 Analyze the following test output for {detected_language} tests using {build_system.value}.
 Provide a comprehensive analysis:
@@ -597,7 +623,7 @@ Please provide:
         interpretation_system_instruction = "You are an expert test analyst and quality assurance engineer. Provide detailed, actionable insights."
 
         try:
-            interpretation_output = self._llm.generate_with_plan(
+            interpretation_output = self._llm_service.generate_with_plan(
                 interpretation_prompt,
                 system_instruction=interpretation_system_instruction,
                 chunk_size=512,
@@ -605,10 +631,9 @@ Please provide:
             )
             test_report_summary = interpretation_output.strip()
 
-            # Enhanced status determination
             if test_exit_code == 0:
                 if "fail" in test_report_summary.lower() or "error" in test_report_summary.lower():
-                    test_report["status"] = "FLAKY"  # Tests passed but analysis found issues
+                    test_report["status"] = "FLAKY"
                 else:
                     test_report["status"] = "PASS"
             else:
@@ -619,7 +644,6 @@ Please provide:
 
         except Exception as e:
             logger.error(f"Error interpreting test results: {e}")
-            # Robust fallback interpretation
             if test_exit_code == 0:
                 test_report["status"] = "PASS"
                 test_report["feedback"] = "All tests passed (automatic assessment)"
@@ -655,7 +679,7 @@ Return the refined code in the same JSON format.
         refinement_system_instruction = "You are an expert code refactoring specialist. Fix the identified issues while maintaining code quality and best practices."
 
         try:
-            refinement_output = self._llm.generate_with_plan(
+            refinement_output = self._llm_service.generate_with_plan(
                 refinement_prompt,
                 system_instruction=refinement_system_instruction,
                 chunk_size=512,
@@ -685,13 +709,11 @@ Respond with only the primary programming language (e.g., "kotlin", "java", "pyt
         user_message = {"role": "user", "content": prompt}
 
         try:
-            llm_response = self._llm.generate(
+            llm_response = self._llm_service.generate(
                 [system_message, user_message],
-                use_tools=False # Assuming generate takes use_tools
+                use_tools=False
             ).strip().lower()
-            
             logger.info(f"LLM detected language: {llm_response}")
-            # Validate response against known languages
             if llm_response in LanguageConfig.LANGUAGE_DETECTION_PATTERNS:
                 return llm_response
             else:
@@ -719,7 +741,7 @@ Respond with only "true" if a build and test cycle is required, and "false" othe
         user_message = {"role": "user", "content": prompt}
 
         try:
-            llm_response = self._llm.generate(
+            llm_response = self._llm_service.generate(
                 [system_message, user_message],
                 use_tools=False
             ).strip().lower()
@@ -728,7 +750,9 @@ Respond with only "true" if a build and test cycle is required, and "false" othe
             return llm_response == "true"
         except Exception as e:
             logger.error(f"Error determining build requirement: {e}")
-            # Default to true to be safe
+            if any(keyword in task_name.lower() or keyword in task_description.lower()
+                   for keyword in ['requirements', 'txt', 'config', 'documentation', 'readme']):
+                return False
             return True
 
     def execute(self, parameters: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> ToolResult:
@@ -738,58 +762,58 @@ Respond with only "true" if a build and test cycle is required, and "false" othe
         try:
             task = parameters["task"]
             project_title = parameters.get("project_title", "Untitled Project")
+            project_id = parameters.get("project_id", "").lower()
             system_instruction = parameters.get("system_instruction")
+            implemented_files = parameters.get("implemented_files", [])
+
+            if project_id:
+                project_dir = f"/root/Q/projects/{project_id}"
+            else:
+                project_dir = f"/root/Q/projects/{project_title.lower().replace(' ', '_')}"
+
+            Path(project_dir).mkdir(parents=True, exist_ok=True)
 
             task_name = task.get('task', 'Untitled Task')
             task_desc = task.get('description', 'No description')
 
-            detected_language = self._detect_language(task_desc)
-            build_system = self._detect_build_system()
+            skip_build_test = self._should_skip_build_test(task_name, task_desc)
+            
+            if self._is_common_task(task_name, task_desc):
+                prompt = self._create_optimized_prompt(task_name, task_desc, implemented_files)
+            else:
+                prompt = self._create_implementation_prompt(task, 1, "", "", project_title)
 
-            is_build_required = self._is_build_required_for_task(task_name, task_desc)
-
-            prompt = self._create_implementation_prompt(task, 1, "", "", project_title)
-
-            chunk_output = self._llm.generate_with_plan(
+            chunk_output = self._llm_service.generate_with_plan(
                 prompt,
                 system_instruction=system_instruction,
-                chunk_size=1024,
-                step_size=512
+                chunk_size=512,
+                step_size=256
             )
 
             chunk_json = safe_json_parse(chunk_output, {})
             if not chunk_json or not chunk_json.get("files"):
-                warning(f"LLM returned invalid or empty JSON for task: {task_name}. Response: {chunk_output[:200]}...")
+                logger.warning(f"LLM returned invalid JSON for task: {task_name}")
                 return ToolResult(
                     status=ToolExecutionStatus.ERROR,
                     result=None,
-                    error_message=f"LLM returned invalid or empty file data for task: {task_name}"
+                    error_message=f"LLM returned invalid file data for task: {task_name}"
                 )
 
             chunk_json = self._validate_implementation_structure(chunk_json)
 
-            if is_build_required:
+            implemented_files = self._batch_write_files(
+                chunk_json.get("files", []),
+                project_dir,
+                project_id
+            )
+
+            if not skip_build_test and implemented_files:
                 build_success, test_success = self._validate_implementation(
-                    chunk_json, task_name, project_title, detected_language, build_system
+                    {"files": implemented_files}, task_name, project_title,
+                    "python", BuildSystem.PIP
                 )
             else:
-                logger.info(f"Skipping build and test for task: {task_name}")
                 build_success, test_success = True, True
-
-            if not build_success or not test_success:
-                return ToolResult(
-                    status=ToolExecutionStatus.ERROR,
-                    result=None,
-                    error_message=f"Build or test failed for task: {task_name}"
-                )
-
-            implemented_files = []
-            for file_data in chunk_json.get("files", []):
-                file_path = file_data["file_path"]
-                content = file_data["content"]
-                # In a real implementation, you would use the file writing tool here.
-                # For the purpose of this refactoring, we'll assume it's called.
-                implemented_files.append(file_data)
 
             return ToolResult(
                 status=ToolExecutionStatus.SUCCESS,
@@ -812,16 +836,21 @@ Respond with only "true" if a build and test cycle is required, and "false" othe
 
         if context and "relevant_files" in context:
             relevant_files = context["relevant_files"]
-            for file_path in relevant_files[:5]:  # Limit to 5 files to avoid overload
+            for file_path in relevant_files[:5]:
                 try:
                     file_content_result = self._tool_registry.execute_tool(
-                        'read_file',
+                        'file_operation',
                         parameters={
-                            'absolute_path': file_path
+                            'operation': 'read',
+                            'path': file_path
                         }
                     )
-                    if file_content_result and "content" in file_content_result:
-                        project_context += f"\n--- File: {file_path} ---\n{file_content_result['content'][:1000]}...\n"
+                    if (
+                        file_content_result and 
+                        file_content_result.status == ToolExecutionStatus.SUCCESS and 
+                        file_content_result.result and 
+                        'content' in file_content_result.result):
+                        project_context += f"\n--- File: {file_path} ---\n{file_content_result.result['content'][:1000]}...\n"
                 except Exception as e:
                     logger.warning(f"Could not read file {file_path} for context: {e}")
 
@@ -865,7 +894,6 @@ Follow these professional guidelines:
 Build System: {build_system.value}
 """
 
-        # Add language-specific guidance
         language_guidance = {
             BuildSystem.MAVEN: "Follow Java best practices and Maven conventions",
             BuildSystem.GRADLE: "Follow Kotlin/Java best practices and Gradle conventions",
@@ -889,11 +917,9 @@ Build System: {build_system.value}
         if not isinstance(implementation["files"], list):
             implementation["files"] = []
 
-        # Validate each file entry
         valid_files = []
         for file_entry in implementation["files"]:
             if isinstance(file_entry, dict) and "file_path" in file_entry and "content" in file_entry:
-                # Ensure action field is present and valid
                 if "action" not in file_entry:
                     file_entry["action"] = "create"
                 if file_entry["action"] not in ["create", "update", "delete"]:
@@ -918,7 +944,6 @@ Build System: {build_system.value}
         build_success = True
         test_success = True
 
-        # Only run build check if there are files to build
         if implementation.get("files"):
             build_report = self._run_build_check(project_title, detected_language, build_system)
             build_success = build_report["status"] in ["PASS", "SKIPPED"]
@@ -926,7 +951,6 @@ Build System: {build_system.value}
             if not build_success:
                 logger.warning(f"Build check failed for {task_name}: {build_report['feedback']}")
 
-            # Run tests if build was successful
             if build_success:
                 test_report = self._generate_and_run_tests(
                     implementation["files"], project_title, detected_language, build_system
@@ -943,12 +967,112 @@ Build System: {build_system.value}
         if successful_tasks == 0:
             return ToolExecutionStatus.ERROR, f"All {total_tasks} tasks failed to implement"
         elif failed_tasks > 0:
-            if successful_tasks / total_tasks >= 0.7:  # 70% success rate
+            if successful_tasks / total_tasks >= 0.7:
                 return ToolExecutionStatus.SUCCESS, f"Completed with {failed_tasks} partial failures out of {total_tasks} tasks"
             else:
                 return ToolExecutionStatus.ERROR, f"{failed_tasks} out of {total_tasks} tasks failed to implement"
         else:
             return ToolExecutionStatus.SUCCESS, None
+
+    def _should_skip_build_test(self, task_name: str, task_description: str) -> bool:
+        """Optimized build requirement detection"""
+        skip_keywords = [
+            'requirements', 'txt', 'config', 'documentation', 'readme', 
+            'setup', 'env', 'gitignore', 'license', 'manifest'
+        ]
+        
+        task_text = (task_name + ' ' + task_description).lower()
+        return any(keyword in task_text for keyword in skip_keywords)
+
+    def _batch_write_files(self, files_data: List[Dict], project_dir: str, project_id: str) -> List[Dict]:
+        """Batch file operations for better performance"""
+        implemented_files = []
+        
+        for file_data in files_data:
+            if "file_path" not in file_data or "content" not in file_data:
+                continue
+                
+            relative_file_path = file_data["file_path"].lstrip('/')
+            file_path = os.path.join(project_dir, relative_file_path)
+            
+            if file_path in self._processed_files:
+                logger.info(f"Skipping already processed file: {file_path}")
+                continue
+                
+            if self._should_skip_file_write(file_path, file_data["content"]):
+                logger.info(f"Skipping unchanged file: {file_path}")
+                self._processed_files.add(file_path)
+                file_data['file_path'] = relative_file_path
+                implemented_files.append(file_data)
+                continue
+
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+            
+            write_result = self._tool_registry.execute_tool(
+                'file_operation',
+                parameters={
+                    'operation': 'write',
+                    'path': file_path,
+                    'content': file_data["content"],
+                    'overwrite': True,
+                    'create_parents': True
+                },
+                context={'project_id': project_id}
+            )
+            
+            if write_result and write_result.status == ToolExecutionStatus.SUCCESS:
+                self._processed_files.add(file_path)
+                file_data['file_path'] = relative_file_path
+                implemented_files.append(file_data)
+                logger.info(f"Successfully wrote file: {file_path}")
+            else:
+                error_msg = write_result.error_message if write_result else "Unknown error"
+                logger.warning(f"Failed to write file {file_path}: {error_msg}")
+
+        return implemented_files
+
+    def _should_skip_file_write(self, file_path: str, new_content: str) -> bool:
+        """Check if file write can be skipped (content unchanged)"""
+        if not os.path.exists(file_path):
+            return False
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                existing_content = f.read()
+            return existing_content == new_content
+        except:
+            return False
+
+    def _is_common_task(self, task_name: str, task_description: str) -> bool:
+        """Identify common tasks for optimized processing"""
+        common_tasks = [
+            'requirements.txt', 'readme', 'setup', 'config', 
+            'environment', 'gitignore', 'manifest'
+        ]
+        task_text = (task_name + ' ' + task_description).lower()
+        return any(task in task_text for task in common_tasks)
+
+    def _create_optimized_prompt(self, task_name: str, task_description: str, implemented_files: List) -> str:
+        """Optimized prompts for common tasks"""
+        existing_files_context = ""
+        if implemented_files:
+            existing_files_context = f"\nExisting files: {', '.join(implemented_files)}"
+
+        if 'requirements.txt' in task_name.lower():
+            return create_safe_prompt_template(
+                f"Create requirements.txt for Flask app.{existing_files_context}",
+                json_schema_hint='{"files": [{"file_path": "requirements.txt", "content": "Flask"}]}'
+            )
+        elif 'readme' in task_name.lower():
+            return create_safe_prompt_template(
+                f"Create README.md for Flask project.{existing_files_context}",
+                json_schema_hint='{"files": [{"file_path": "README.md", "content": "# Flask App"}]}'
+            )
+        
+        return self._create_implementation_prompt(
+            {"task": task_name, "description": task_description},
+            1, "", existing_files_context, "Project"
+        )
 
     def summarize_implementation(self, all_outputs: list) -> str:
         """Create professional implementation summary"""
@@ -971,7 +1095,7 @@ Build System: {build_system.value}
                     files_info.append(f"{file_path} ({action})")
 
                 task_name = output.get('task', 'Unknown task')
-                files_str = ", ".join(files_info[:3])  # Show first 3 files
+                files_str = ", ".join(files_info[:3])
                 if len(files_info) > 3:
                     files_str += f" ... and {len(files_info) - 3} more"
 

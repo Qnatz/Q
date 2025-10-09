@@ -82,8 +82,10 @@ class OrchestratorAgent:
             return None
 
         say_system("Existing Projects:")
+        project_lines = []
         for i, project in enumerate(projects):
-            say_system(f"{i + 1}. {project['project_name']} (Status: {project['status']}, Completion: {project['completion_rate']:.0%})")
+            project_lines.append(f"{i + 1}. {project['project_name']} (Status: {project['status']}, Completion: {project['completion_rate']:.0%})")
+        say_system("\n".join(project_lines))
 
         while True:
             choice = console.input("[bold blue]💭 Enter the number of the project to resume, or type 'new' to start a new project: [/bold blue]").strip()
@@ -140,7 +142,7 @@ class OrchestratorAgent:
             response_dict = {"type": route, "message": message}
 
             # Handle the response
-            self.response_handler.handle_response(response_dict, user_id, project_id)
+            response_dict = self.response_handler.handle_response(response_dict, user_id, project_id)
 
             # Check if ideation is complete and a build is pending
             if state.pending_build_confirmation:
@@ -224,7 +226,14 @@ class OrchestratorAgent:
 
         while True:
             try:
-                user_input = console.input("[bold blue]💭 You > [/bold blue]").strip()
+                say_user("💭 You > (Press Enter twice to send)")
+                user_input_lines = []
+                while True:
+                    line = console.input()
+                    if line == "":
+                        break
+                    user_input_lines.append(line)
+                user_input = "\n".join(user_input_lines)
 
                 if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
                     say_system(

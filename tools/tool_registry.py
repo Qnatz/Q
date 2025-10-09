@@ -30,11 +30,12 @@ class ToolRegistry:
     Main tool registry for managing and executing tools
     """
     
-    def __init__(self, config_path: Optional[str] = None, llm: Any = None):
+    def __init__(self, config_path: Optional[str] = None, llm: Any = None, llm_service: Any = None):
         self.tools: Dict[str, BaseTool] = {}
         self.config_path = config_path or "config/tools.yaml"
         self.execution_history: List[Dict[str, Any]] = []
-        self.llm = llm
+        self.llm = llm # This is UnifiedLLM
+        self.llm_service = llm_service # This is LLMService
         
         self._register_builtin_tools()
         self._load_custom_tools()
@@ -51,10 +52,10 @@ class ToolRegistry:
             RobustReplaceTool(),
             GitTool(),
             ShellTool(),
-            StepwisePlannerTool(llm=self.llm),
-            StepwiseImplementationTool(llm=self.llm, tool_registry=self),
-            StepwiseQATool(llm=self.llm),
-            StepwiseReviewTool(llm=self.llm)
+            StepwisePlannerTool(llm=self.llm_service), # Use LLMService
+            StepwiseImplementationTool(self.llm_service, tool_registry=self), # Use LLMService
+            StepwiseQATool(llm_service=self.llm_service, tool_registry=self),
+            StepwiseReviewTool(llm_service=self.llm_service, tool_registry=self)
         ]
         
         for tool in builtin_tools:
@@ -207,9 +208,9 @@ def create_tool_aware_memory_integration(memory_instance, registry_instance):
     return registry_instance
 
 # Factory functions
-def create_default_tool_registry(llm: Any = None) -> ToolRegistry:
+def create_default_tool_registry(llm: Any = None, llm_service: Any = None) -> ToolRegistry:
     """Create a tool registry with all built-in tools"""
-    return ToolRegistry(llm=llm)
+    return ToolRegistry(llm=llm, llm_service=llm_service)
 
 def create_minimal_tool_registry(llm: Any = None) -> ToolRegistry:
     """Create a minimal tool registry with only essential tools"""

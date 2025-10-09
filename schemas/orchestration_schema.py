@@ -1,5 +1,5 @@
 import dataclasses
-from typing import List
+from typing import List, Optional
 
 @dataclasses.dataclass
 class Task:
@@ -8,6 +8,36 @@ class Task:
 
     def add_note(self, note: str):
         self.notes.append(note)
+
+@dataclasses.dataclass
+class ProgrammingTaskParams:
+    task: str
+    context: str
+    conversation_history: str
+    plan: str
+    project_state: dict
+    step_already_performed: bool
+    skip_until_step: Optional[str]
+    repo_path: str
+    task_id: str
+    message_callback: callable
+    is_last_step: bool
+    skip_tests: bool
+    skip_build: bool
+    test_command: Optional[str]
+    build_command: Optional[str]
+    focus_file: Optional[str]
+    focus_diff: Optional[str]
+    focus_lines: Optional[str]
+    exit_on_failure: bool
+    max_retries: int
+    retry_count: int
+    error_message: Optional[str]
+    error_details: Optional[str]
+    code_changes_made: bool
+    planning_note: Optional[str]
+    current_step_index: int
+    total_steps: int
 
 ORCHESTRATION_SCHEMA = {
     "type": "object",

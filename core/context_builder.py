@@ -1,4 +1,3 @@
-# context_builder.py
 import logging
 from typing import List, Dict, Any
 from dataclasses import dataclass
@@ -114,7 +113,7 @@ class ContextBuilder:
         """Fetch IDE context from the local sidecar server."""
         try:
             response = httpx.get("http://127.0.0.1:8001/context", timeout=0.5)
-            response.raise_for_status()  # Raise an exception for HTTP errors
+            response.raise_for_status()
             return response.json()
         except httpx.RequestError as e:
             logger.warning(f"Could not connect to IDE server: {e}")
@@ -128,33 +127,87 @@ class ContextBuilder:
 
     def build_conversation_context(self, state: dict) -> str:
         """Build optimized conversation context"""
-        user_id = state.get("user_id", "default_user")
-        project_id = state.get("current_project_id")
-        current_query = state["history"][-1]["content"]
+        # Support both dict and ConversationState objects
+        if isinstance(state, ConversationState):
+            user_id = state.user_id
+            project_id = state.current_project_id
+            history = state.history
+        else:
+            user_id = state.get("user_id", "default_user")
+            project_id = state.get("current_project_id")
+            history = state.get("history", [])
+        
+        current_query = ""
+        if history:
+            last_msg = history[-1]
+            if isinstance(last_msg, dict):
+                current_query = last_msg.get("content", "")
+            else:
+                current_query = getattr(last_msg, "content", "")
 
-        context = self.unified_memory.get_conversation_context(user_id, current_query, project_id)
+        # Try to get conversation context from unified memory
+        context = {}
+        try:
+            # Check if method exists before calling
+            if hasattr(self.unified_memory, 'get_conversation_context'):
+                context = self.unified_memory.get_conversation_context(
+                    user_id, current_query, project_id
+                )
+            else:
+                logger.warning("unified_memory.get_conversation_context not available, using fallback")
+                context = self._get_fallback_context(user_id, project_id, history)
+        except Exception as e:
+            logger.error(f"Failed to get conversation context: {e}")
+            context = self._get_fallback_context(user_id, project_id, history)
 
+        # Build context string
         context_str = ""
+        
         if context.get("relevant_facts"):
             context_str += "Relevant Facts:\n"
             for fact in context["relevant_facts"]:
-                context_str += f"- {fact['content']}\n"
+                content = fact.get("content", str(fact))
+                context_str += f"- {content}\n"
             context_str += "\n"
 
         if context.get("semantic_context"):
             context_str += "Similar conversation snippets:\n"
             for snippet in context["semantic_context"]:
-                context_str += f"- {snippet['content']}\n"
+                content = snippet.get("content", str(snippet))
+                context_str += f"- {content}\n"
             context_str += "\n"
 
         if context.get("recent_conversation"):
             context_str += "Recent conversation:\n"
             for msg in context["recent_conversation"]:
-                context_str += f"{msg['metadata']['role']}: {msg['content']}\n"
+                role = msg.get("metadata", {}).get("role", msg.get("role", "unknown"))
+                content = msg.get("content", "")
+                context_str += f"{role}: {content}\n"
 
-        return context_str
+        return context_str.strip() if context_str else "No context available"
 
-    # 🔑 Alias to prevent router crashes
+    def _get_fallback_context(self, user_id: str, project_id: str, history: List[dict]) -> Dict[str, Any]:
+        """Fallback context when unified_memory method is unavailable"""
+        context = {
+            "relevant_facts": [],
+            "semantic_context": [],
+            "recent_conversation": []
+        }
+        
+        # Use recent history as fallback
+        if history:
+            recent_messages = history[-5:]  # Last 5 messages
+            context["recent_conversation"] = [
+                {
+                    "content": msg.get("content", ""),
+                    "metadata": {"role": msg.get("role", "unknown")}
+                }
+                for msg in recent_messages
+            ]
+        
+        return context
+
+    # Alias to prevent router crashes
     def get_conversation_context(self, state: dict) -> str:
         """Alias for build_conversation_context (backward compatibility)."""
         return self.build_conversation_context(state)

@@ -8,9 +8,11 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Generator
 from dataclasses import dataclass
 from enum import Enum
+
+from tools.base_tool_classes import ToolExecutionStatus # Added import
 
 logger = logging.getLogger(__name__)
 
@@ -54,33 +56,115 @@ class QAModule:
     def __init__(self, tool_registry, reports_dir: str = "project_state"):
         self.tool_registry = tool_registry
         self.reports_dir = Path(reports_dir)
+        self._file_cache = {}  # NEW: Cache for file content
+        self._validation_cache = {}  # NEW: Cache validation results
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         """Create necessary directories"""
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
+    def _resolve_file_paths(self, implemented_files: List[str], project_id: Optional[str] = None) -> List[str]:
+        """Resolve file paths to be absolute"""
+        absolute_files = []
+        for file_path in implemented_files:
+            if file_path.startswith('/'):
+                # Already absolute
+                absolute_files.append(file_path)
+            else:
+                # Use consistent project directory
+                base_dir = f"/root/Q/projects/{project_id.lower()}" if project_id else "/root/Q/projects"
+                absolute_path = str(Path(base_dir) / file_path)
+                absolute_files.append(absolute_path)
+        return absolute_files
+
+    def progressive_test(self, implemented_files: List[str], 
+                       project_id: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+        """Progressive QA that validates files as they're implemented"""
+        absolute_files = self._resolve_file_paths(implemented_files, project_id)
+        
+        # Deduplicate files
+        unique_files = list(dict.fromkeys(absolute_files))
+        
+        total_files = len(unique_files)
+        validated_count = 0
+        
+        for file_path in unique_files:
+            # Skip if already validated in this session
+            if file_path in self._validation_cache:
+                result = self._validation_cache[file_path]
+                validated_count += 1
+                yield {
+                    "type": "file_validated",
+                    "file": file_path,
+                    "status": result.status,
+                    "progress": f"{validated_count}/{total_files}",
+                    "cached": True
+                }
+                continue
+            
+            # Validate individual file
+            result = self._validate_file(file_path)
+            self._validation_cache[file_path] = result
+            
+            validated_count += 1
+            yield {
+                "type": "file_validated", 
+                "file": file_path,
+                "status": result.status,
+                "feedback": result.feedback,
+                "progress": f"{validated_count}/{total_files}",
+                "cached": False
+            }
+            
+            # Small delay to allow UI updates
+            import time
+            time.sleep(0.1)
+        
+        # Final summary
+        summary = self._generate_summary(list(self._validation_cache.values()), 0)
+        yield {
+            "type": "qa_complete",
+            "status": summary.overall_status.value,
+            "passed": summary.passed,
+            "total": summary.total_files
+        }
+
     def _validate_file(self, file_path: str) -> QAFileResult:
-        """Validate individual file"""
+        """Enhanced file validation with caching"""
+        # Check cache first
+        if file_path in self._file_cache:
+            return self._file_cache[file_path]
+        
         path = Path(file_path)
         
         if not path.exists():
-            return QAFileResult(
+            result = QAFileResult(
                 file_path=file_path,
                 status="missing",
                 feedback="File does not exist",
                 exists=False,
                 is_empty=True
             )
+            self._file_cache[file_path] = result
+            return result
         
         try:
             file_size = path.stat().st_size
             is_empty = file_size == 0
             
-            feedback = "File exists and is non-empty" if not is_empty else "File exists but is empty"
-            status = "passed" if not is_empty else "failed"
+            # For non-empty files, do quick content validation
+            feedback = "File exists and is non-empty"
+            status = "passed"
             
-            return QAFileResult(
+            if not is_empty:
+                # Quick syntax check for common file types
+                syntax_ok = self._quick_syntax_check(file_path)
+                if not syntax_ok:
+                    status = "failed"
+                    feedback = "File exists but has syntax issues"
+            
+            result = QAFileResult(
                 file_path=file_path,
                 status=status,
                 feedback=feedback,
@@ -89,14 +173,41 @@ class QAModule:
                 file_size=file_size
             )
             
+            self._file_cache[file_path] = result
+            return result
+            
         except Exception as e:
-            return QAFileResult(
+            result = QAFileResult(
                 file_path=file_path,
                 status="error",
                 feedback=f"Error checking file: {str(e)}",
                 exists=False,
                 is_empty=True
             )
+            self._file_cache[file_path] = result
+            return result
+
+    def _quick_syntax_check(self, file_path: str) -> bool:
+        """Quick syntax validation for common file types"""
+        try:
+            if file_path.endswith('.json'):
+                with open(file_path, 'r') as f:
+                    json.load(f)
+                return True
+            elif file_path.endswith('.py'):
+                # Basic Python syntax check
+                with open(file_path, 'r') as f:
+                    compile(f.read(), file_path, 'exec')
+                return True
+            elif file_path.endswith(('.yaml', '.yml')):
+                import yaml
+                with open(file_path, 'r') as f:
+                    yaml.safe_load(f)
+                return True
+        except:
+            return False
+        
+        return True  # For other file types, assume valid
 
     def _check_plan_compliance(self, implemented_files: List[str], 
                              plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -104,9 +215,11 @@ class QAModule:
         if not plan:
             return {"compliance_check": False, "message": "No plan provided for compliance check"}
         
-        planned_files = plan.get("files", []) if isinstance(plan, dict) else []
+        # Extract only the file paths from the planned files (which are dictionaries)
+        planned_file_paths = [f.get("path") for f in plan.get("files", []) if isinstance(f, dict) and "path" in f]
+        
         implemented_set = set(implemented_files)
-        planned_set = set(planned_files)
+        planned_set = set(planned_file_paths)
         
         missing_files = planned_set - implemented_set
         extra_files = implemented_set - planned_set
@@ -215,22 +328,28 @@ class QAModule:
         }
 
     def test(self, implemented_files: List[str], 
-             plan: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
-        """
-        Execute comprehensive QA testing
-        
-        Args:
-            implemented_files: List of file paths to test
-            plan: Optional project plan for compliance checking
-            
-        Returns:
-            Dictionary with paths to generated reports
-        """
+             plan: Optional[Dict[str, Any]] = None,
+             project_id: Optional[str] = None) -> Dict[str, str]:
         start_time = datetime.now()
         timestamp = start_time.strftime("%Y-%m-%d %H:%M:%S")
         
         logger.info(f"Starting professional QA testing on {len(implemented_files)} files")
         
+        # FIX: Better path resolution
+        absolute_files = []
+        for file_path in implemented_files:
+            if file_path.startswith('/'):
+                # Already absolute
+                absolute_files.append(file_path)
+            else:
+                # Use consistent project directory
+                base_dir = f"/root/Q/projects/{project_id.lower()}" if project_id else "/root/Q/projects"
+                absolute_path = str(Path(base_dir) / file_path)
+                absolute_files.append(absolute_path)
+        
+        implemented_files = absolute_files
+        logger.info(f"Resolved file paths: {implemented_files}")
+
         report_paths = {}
         
         try:
@@ -285,7 +404,7 @@ class QAModule:
                         tool_report_path = self.reports_dir / "advanced_qa_report.json"
                         with open(tool_report_path, "w", encoding="utf-8") as f:
                             json.dump({
-                                "tool_status": getattr(tool_result, 'status', 'unknown'),
+                                "tool_status": getattr(tool_result, 'status', 'unknown').value if hasattr(tool_result, 'status') and isinstance(getattr(tool_result, 'status'), ToolExecutionStatus) else getattr(tool_result, 'status', 'unknown'),
                                 "tool_result": getattr(tool_result, 'result', {}),
                                 "error_message": getattr(tool_result, 'error_message', None),
                                 "execution_time": getattr(tool_result, 'execution_time', 0),

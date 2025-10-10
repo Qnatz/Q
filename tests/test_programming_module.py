@@ -1,11 +1,11 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import pytest
 from unittest.mock import MagicMock, patch
 
-from agent_processes.programming_module import ProgrammingModule, BuildSystem
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from agent_processes.programming_module import ProgrammingModule
 
 @pytest.fixture
 def mock_llm_service():
@@ -19,28 +19,35 @@ def mock_prompt_manager():
 def mock_tool_registry():
     return MagicMock()
 
-def test_programming_module_initialization(mock_llm_service, mock_prompt_manager, mock_tool_registry):
+@pytest.fixture
+def mock_state_manager():
+    """Fixture for a mock state manager."""
+    return MagicMock()
+
+def test_programming_module_initialization(mock_llm_service, mock_prompt_manager, mock_tool_registry, mock_state_manager):
     """Test that the ProgrammingModule initializes correctly."""
-    module = ProgrammingModule(mock_llm_service, mock_prompt_manager, mock_tool_registry)
+    module = ProgrammingModule(
+        llm_service=mock_llm_service,
+        prompt_manager=mock_prompt_manager,
+        tool_registry=mock_tool_registry,
+        state_manager=mock_state_manager
+    )
     assert module is not None
 
-@patch("glob.glob", return_value=["pom.xml"])
-def test_detect_build_system_maven(mock_glob, mock_llm_service, mock_prompt_manager, mock_tool_registry):
-    """Test that the _detect_build_system method correctly identifies Maven."""
-    module = ProgrammingModule(mock_llm_service, mock_prompt_manager, mock_tool_registry)
-    build_system = module._detect_build_system()
-    assert build_system == BuildSystem.MAVEN
+@patch("agent_processes.programming_module.ProgrammingModule._get_current_files")
+def test_implement_with_no_tasks(mock_get_files, mock_llm_service, mock_prompt_manager, mock_tool_registry, mock_state_manager):
+    """Test that the implement method handles a plan with no tasks."""
+    module = ProgrammingModule(mock_llm_service, mock_prompt_manager, mock_tool_registry, mock_state_manager)
 
-def test_detect_language_from_context(mock_llm_service, mock_prompt_manager, mock_tool_registry):
-    """Test that the _detect_language_from_context method correctly calls the LLM and returns the language."""
-    module = ProgrammingModule(mock_llm_service, mock_prompt_manager, mock_tool_registry)
-    mock_llm_service.generate.return_value = "python"
-    language = module._detect_language_from_context("My Project", {"tasks": [{"description": "Create a web server"}]})
-    assert language == "python"
-    mock_llm_service.generate.assert_called_once()
+    plan = {"tasks": []}
+    project_title = "Test Project"
+    user_id = "test_user"
+    project_id = "test_project"
 
-def test_get_build_commands(mock_llm_service, mock_prompt_manager, mock_tool_registry):
-    """Test that the _get_build_commands method returns the correct commands for a given build system."""
-    module = ProgrammingModule(mock_llm_service, mock_prompt_manager, mock_tool_registry)
-    maven_commands = module._get_build_commands(BuildSystem.MAVEN)
-    assert maven_commands["build_command"] == ["./mvnw", "compile"] if os.path.exists("./mvnw") else ["mvn", "compile"]
+    # The implement method is a generator. We need to consume it.
+    results = list(module.implement(plan, project_title, user_id, project_id))
+
+    assert len(results) == 1
+    assert results[0]["type"] == "complete"
+    assert results[0]["status"] == "success"
+    assert "No tasks to implement" in results[0]["message"]

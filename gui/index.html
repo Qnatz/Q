@@ -11,70 +11,91 @@
     <h2>Server Status</h2>
     <p id="status">Unknown</p>
 
-    <h2>Send Context</h2>
-    <textarea id="context-input" rows="4" cols="50"></textarea>
+    <h2>Code Input</h2>
+    <textarea id="code-input" rows="10" cols="80"></textarea>
     <br>
-    <button id="send-button">Send Context</button>
+    <button id="assist-button">Code Assist</button>
+    <button id="review-button">Review</button>
+    <button id="qa-button">QA</button>
 
-    <h2>Received Context</h2>
-    <pre id="received-context"></pre>
+    <h2>Output</h2>
+    <pre id="output"></pre>
 
     <script>
         const statusElement = document.getElementById('status');
-        const contextInputElement = document.getElementById('context-input');
-        const sendButtonElement = document.getElementById('send-button');
-        const receivedContextElement = document.getElementById('received-context');
+        const codeInputElement = document.getElementById('code-input');
+        const assistButtonElement = document.getElementById('assist-button');
+        const reviewButtonElement = document.getElementById('review-button');
+        const qaButtonElement = document.getElementById('qa-button');
+        const outputElement = document.getElementById('output');
 
         // Check server status
         fetch('http://127.0.0.1:8001/')
             .then(response => response.json())
             .then(data => {
-                statusElement.textContent = data.message;
+                statusElement.textContent = data.status;
             })
             .catch(error => {
                 statusElement.textContent = 'Error connecting to server.';
                 console.error('Error:', error);
             });
 
-        // Send context
-        sendButtonElement.addEventListener('click', () => {
-            const contextData = {
-                data: contextInputElement.value
-            };
+        // --- Event Listeners for Buttons ---
 
-            fetch('http://127.0.0.1:8001/context', {
+        assistButtonElement.addEventListener('click', () => {
+            const code = codeInputElement.value;
+            postToServer('/assist', { code });
+        });
+
+        reviewButtonElement.addEventListener('click', () => {
+            const code = codeInputElement.value;
+            postToServer('/review', { code });
+        });
+
+        qaButtonElement.addEventListener('click', () => {
+            const code = codeInputElement.value;
+            postToServer('/qa', { code });
+        });
+
+        // --- Helper Function to Post to Server ---
+
+        function postToServer(endpoint, data) {
+            outputElement.textContent = 'Loading...';
+            fetch(`http://127.0.0.1:8001${endpoint}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(contextData),
+                body: JSON.stringify(data),
             })
             .then(response => response.json())
-            .then(data => {
-                console.log('Success:', data);
-                // Refresh received context
-                getContext();
+            .then(result => {
+                // The response from the server is a JSON object.
+                // We need to extract the relevant field (assistance, review, or qa)
+                // and then display it as a formatted JSON string.
+                let output = "Could not find relevant output.";
+                if (result.assistance) {
+                    output = result.assistance;
+                } else if (result.review) {
+                    output = result.review;
+                } else if (result.qa) {
+                    output = result.qa;
+                }
+
+                try {
+                    // Try to parse the output if it's a JSON string
+                    const parsedOutput = JSON.parse(output);
+                    outputElement.textContent = JSON.stringify(parsedOutput, null, 2);
+                } catch (e) {
+                    // If it's not a JSON string, display it as is
+                    outputElement.textContent = output;
+                }
             })
             .catch((error) => {
+                outputElement.textContent = `Error: ${error.message}`;
                 console.error('Error:', error);
             });
-        });
-
-        // Get context
-        function getContext() {
-            fetch('http://127.0.0.1:8001/context')
-                .then(response => response.json())
-                .then(data => {
-                    receivedContextElement.textContent = JSON.stringify(data, null, 2);
-                })
-                .catch(error => {
-                    receivedContextElement.textContent = 'Error fetching context.';
-                    console.error('Error:', error);
-                });
         }
-
-        // Initial fetch of context
-        getContext();
     </script>
 </body>
 </html>
